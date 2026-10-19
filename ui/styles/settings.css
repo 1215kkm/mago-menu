@@ -1,0 +1,31 @@
+/* 시프트 메뉴 설정 창 — 색은 tokens.css (컴뚝딱과 같은 보라→분홍) */
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--light-bg); color: var(--text-dark); font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
+#app { max-width: 720px; margin: 0 auto; padding: 24px 20px 32px; display: flex; flex-direction: column; gap: 16px; }
+.muted { color: var(--text-muted); margin: 4px 0 0; }
+.head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.head h1 { margin: 0; font-size: 1.5rem; }
+.state { flex: none; padding: 6px 12px; border-radius: 999px; background: var(--light-card); border: 1px solid var(--light-border); color: var(--text-muted); font-weight: 700; }
+.state.on { background: rgba(var(--primary-rgb), .1); border-color: transparent; color: var(--primary-dark); }
+.card { background: var(--light-card); border: 1px solid var(--light-border); border-radius: var(--radius-lg); padding: 18px 20px; box-shadow: var(--shadow-sm); }
+.card h2 { margin: 0 0 8px; font-size: 1.1rem; }
+.row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 0; }
+.lab { width: 92px; flex: none; color: var(--text-muted); }
+.seg { display: inline-flex; background: var(--light-bg); border: 1px solid var(--light-border); border-radius: var(--radius-md); padding: 4px; gap: 4px; flex-wrap: wrap; }
+.seg button { padding: 8px 16px; min-height: 40px; border: 0; background: transparent; border-radius: var(--radius-sm); color: var(--text-muted); font: inherit; font-weight: 500; cursor: pointer; }
+.seg button:hover { background: var(--light-hover); }
+.seg button.on { background: var(--light-card); color: var(--primary); font-weight: 700; box-shadow: var(--shadow-sm); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { min-height: 36px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--light-border); background: var(--light-card); color: var(--text-dark); font: inherit; font-weight: 600; cursor: pointer; }
+.chip:hover { border-color: var(--primary); }
+.chip.on { background: var(--primary); border-color: var(--primary); color: var(--text-primary); }
+.actions { padding: 8px 0; }
+.btn { min-height: 40px; padding: 8px 16px; border-radius: var(--radius-md); border: 1px solid var(--light-border); background: var(--light-card); color: var(--text-dark); font: inherit; font-weight: 600; cursor: pointer; }
+.btn:hover { border-color: var(--primary); color: var(--primary); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--text-muted); }
+.hint { margin: 6px 0 0; color: var(--text-muted); line-height: 1.6; }
+.steps { margin: 0 0 6px; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; line-height: 1.6; }
+kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--light-border); border-bottom-width: 2px; border-radius: 6px; background: var(--light-card); font: inherit; font-weight: 700; font-size: .92em; color: var(--text-dark); }
+.foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: var(--radius-md); background: var(--text-dark); color: var(--text-primary); box-shadow: var(--shadow-lg); }
+.toast.bad { background: var(--error); }

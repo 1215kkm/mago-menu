@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "설정 창(settings)과 고리 창(qconv). 앱 자체 command 와 이벤트 듣기만 — 파일시스템·셸·HTTP 플러그인 없음.",
+  "windows": ["settings", "qconv"],
+  "permissions": ["core:default"]
+}

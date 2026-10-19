@@ -1,0 +1,67 @@
+[package]
+name = "shift-menu"
+version = "0.1.0"
+description = "시프트 메뉴 — 탐색기에서 Shift 를 누른 채 파일을 끌면 뜨는 원형 메뉴"
+authors = ["1215kkm"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "shift_menu_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# 화면(ui/)을 exe 에 늘 품는다 — 개발 서버(devUrl) 없이 `cargo run` 만으로 돈다.
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+winreg = "0.55"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+symphonia = { version = "0.5.5", default-features = false, features = ["mp3", "wav", "pcm"] }
+mp3lame-encoder = "0.2.5"
+# 컴뚝딱과 같은 Windows API 묶음 (필요 없는 것도 섞여 있다 — 정리는 나중에)
+windows = { version = "0.61", features = [
+  "Win32_Foundation", "Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_System_Registry",
+  # 10-16 PDF → 그림 (imagery/pdf_render.rs) — Windows 에 들어 있는 PDF 그리기. 설치 파일에 더하는 것 없음.
+  "Foundation", "Data_Pdf", "Storage", "Storage_Streams",
+  # 10-19 끌다가 바로 바꾸기 (imagery/quick.rs) — 놓기를 받는 둥근 창(OLE IDropTarget). 놓을 때 언제나 "복사" 로 답해 원본이 지워지지 않게.
+  # wry 가 같은 버전에 이미 켠 기능들이라 빌드가 늘지 않는다.
+  "Win32_System_Com_StructuredStorage", "Win32_System_SystemServices", "Win32_System_LibraryLoader",
+  "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi",
+  # 위 놓기 창 테스트가 탐색기와 같은 셸 끌기 데이터(SHCreateDataObject)를 만들 때 쓰는 항목 목록 형식
+  "Win32_UI_Shell_Common",
+] }
+# 놓기 창의 IDropTarget 을 만드는 #[implement] 매크로가 `windows_core` 이름으로 찾는다 (wry 와 같은 0.61 — 새로 받는 것 없음)
+windows-core = "0.61"
+windows-sys = { version = "0.61", features = [
+  # Win32_Security_Authorization: 복구 도우미 파이프 DACL 을 "현재 사용자만" 으로 만드는 SDDL 변환(ConvertStringSecurityDescriptorToSecurityDescriptorW·ConvertSidToStringSidW).
+  "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl",
+  "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging",
+  # v1.3 붙임 모드 (window/) — 모니터 목록·작업 영역(Gdi), 모니터별 배율(HiDpi), 다른 가상 데스크톱 판정(Dwm: DWMWA_CLOAKED).
+  # 전부 *읽기* 와 *창 위치* 호출뿐이다. 프로세스를 끝내거나 입력을 보내는 API 는 쓰지 않는다.
+  # Win32_System_LibraryLoader: 항상 위(topmost) Z 순서 실측 테스트가 시험 창을 만들 때만 쓴다.
+  "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_Graphics_Dwm", "Win32_System_LibraryLoader",
+  # v1.4 기본 저장 폴더 — SHGetKnownFolderPath(FOLDERID_Documents) + 그 문자열 해제(CoTaskMemFree).
+  "Win32_System_Com",
+  # 09-30 내 단축키 (photoshop/hotkeys.rs) — 포토샵이 맨 앞일 때 누른 조합 읽기(GetAsyncKeyState) +
+  # 고정한 단축키를 포토샵에 한 번 보내기(SendInput). 사용자가 누를 때만 보낸다.
+  "Win32_UI_Input_KeyboardAndMouse",
+  # 10-01 포토샵에서 손을 쓰는 중엔 상태를 묻지 않기 — 마지막 입력 시각(GetLastInputInfo)과 비교할 현재 시각(GetTickCount).
+  "Win32_System_SystemInformation",
+  # 10-01 구글 드라이브 — 로그인 유지 열쇠를 이 Windows 계정만 풀 수 있게 암호화(DPAPI CryptProtectData) + PKCE 난수(BCryptGenRandom).
+  "Win32_Security_Cryptography",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+strip = true

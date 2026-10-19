@@ -1,0 +1,138 @@
+/* ============================================================
+   tokens.css — 활성 디자인 스타일 #1 Crowny Class 토큰
+   출처: .claude/knowledge/ui-designer/styles/01-crowny-class.md §15
+   이 파일 하나만 고치면 전 화면에 반영된다. 다른 파일에 HEX·px 직접 박지 말 것.
+   ============================================================ */
+:root {
+  /* ===== 브랜드 ===== */
+  --primary: #8A38F5;
+  --primary-dark: #7030D4;
+  --primary-light: #A855F7;
+  --primary-rgb: 138, 56, 245;
+  --secondary: #D53A6B;
+  --secondary-rgb: 213, 58, 107;
+  --secondary-light: #F472B6;
+  --gradient: linear-gradient(135deg, #8A38F5 0%, #D53A6B 100%);
+
+  /* ===== 다크 (사이드바) ===== */
+  --dark-bg: #1B1D21;
+  --dark-secondary: #1A1C22;
+  --dark-tertiary: #2B2D35;
+  --dark-border: #3D3D54;
+
+  /* ===== 라이트 (콘텐츠) ===== */
+  --light-bg: #F3F4F6;
+  --light-card: #FFFFFF;
+  --light-border: #E5E7EB;
+  --light-hover: #F9FAFB;
+
+  /* ===== 텍스트 ===== */
+  --text-primary: #FFFFFF;
+  --text-dark: #1F2937;
+  --text-secondary: #9CA3AF;
+  --text-muted: #6B7280;
+
+  /* ===== 상태 ===== */
+  --success: #22C55E;  --success-light: #DCFCE7;
+  --warning: #F59E0B;  --warning-light: #FEF3C7;
+  --on-gradient-yellow: #FDE047; /* 그라데이션 위 강조 글자 (내가 사용한 단축키 · 방금 누른 것) */
+  --error:   #EF4444;  --error-light:   #FEE2E2;  --error-rgb: 239, 68, 68;
+  --info:    #3B82F6;  --info-light:    #DBEAFE;
+
+  /* ===== 모서리 ===== */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* ===== 그림자 ===== */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
+  --shadow-lg: 0 10px 15px rgba(0,0,0,0.10);
+  --shadow-xl: 0 20px 25px rgba(0,0,0,0.15);
+  --shadow-primary: 0 4px 14px rgba(138, 56, 245, 0.35);
+
+  /* ===== 간격 ===== */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* ===== 레이아웃 ===== */
+  --sidebar-width: 260px;
+  --header-height: 64px;
+
+  /* ===== 폰트 크기 (최소 16px) ===== */
+  --font-xs:  16px;
+  --font-sm:  16px;
+  --font-md:  16px;   /* 본문 기본 */
+  --font-lg:  18px;
+  --font-xl:  20px;
+  --font-2xl: 26px;
+  --font-3xl: 32px;
+
+  /* ===== 트랜지션 ===== */
+  --transition-fast:   0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow:   0.3s ease;
+
+  /* ===== 보더 ===== */
+  --border-color: #E5E7EB;
+  --border: 1px solid #E5E7EB;
+
+  /* ===== 폰트 패밀리 ===== */
+  --font-family-base:    'Pretendard Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-family-display: 'Agbalumo', cursive; /* 로고·장식 한정 */
+
+  /* ===== 섹션별 공통 간격 ===== */
+  --section-gap:       var(--spacing-xl);  /* 32px */
+  --section-padding-y: var(--spacing-xl);
+  --section-padding-x: var(--spacing-lg);  /* 24px */
+
+  /* ===== 컨텐츠별 공통 간격 ===== */
+  --content-gap:    var(--spacing-md);     /* 16px */
+  --content-padding: var(--spacing-md);
+  --card-padding:    var(--spacing-md);    /* 카드 내부 16~20px */
+
+  /* ===== 콘텐츠 최대 폭 ===== */
+  --content-max-width: 1280px;
+
+  /* ===== 컴포넌트 보조 (스타일 문서 §2.6 · §10.1 · §10.8 값 그대로) ===== */
+  /* 칩: 10~12% 배경 + 진한 글자 */
+  --chip-purple-bg: rgba(138, 56, 245, 0.10);  --chip-purple-fg: #6B46C1;
+  --chip-blue-bg:   rgba(59, 130, 246, 0.10);  --chip-blue-fg:   #1D4ED8;
+  --chip-green-bg:  rgba(34, 197, 94, 0.10);   --chip-green-fg:  #15803D;
+  --chip-orange-bg: rgba(245, 158, 11, 0.12);  --chip-orange-fg: #B45309;
+  --chip-dark-bg:   rgba(255, 255, 255, 0.08); --chip-dark-fg:   #9CA3AF;
+  /* 버튼 */
+  --btn-secondary-bg: #F3F4F6;  --btn-secondary-fg: #374151;
+  --btn-outline-border: #D1D5DB;
+  /* 사이드바 메뉴 (§10.8) */
+  --nav-hover-bg: rgba(255, 255, 255, 0.06);
+  --nav-active-bg: rgba(139, 92, 246, 0.15);
+  --nav-active-fg: #A78BFA;
+  /* 헤더 그림자 (§10.8) */
+  --header-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  /* 하단 고정 바 — 레이아웃 흔들림 방지용 고정 높이 */
+  --footbar-height: 72px;
+  /* 터치 타겟 최소 */
+  --touch-min: 44px;
+
+  /* ===== v1.3 붙임 모드 (레일) =====
+     ① --od-* = "다크 표면 위 상태색" 짝. 레일 배경이 --dark-bg 라 --primary/--success/--error
+        원색은 대비가 안 나온다. 스타일 #1 §2.6 이 다크용은 연한 쪽을 쓰라고 정해 둔 패턴 그대로다
+        (#A78BFA 는 사이드바 .mi.on 에서 이미 쓰던 --nav-active-fg 와 같은 값 — 새 색이 아니다).
+     ② --rail-w 는 기본값이고, 붙임 중에는 DockState 가 준 실제 폭으로 덮어쓴다.
+        펼침 패널 폭은 변수로 두지 않는다 — 창 폭에서 레일을 뺀 나머지(flex:1)라 값이 하나뿐이다. */
+  --od-primary:   #C4B5FD;
+  --od-primary-2: #A78BFA;
+  --od-success:   #4ADE80;
+  --od-error:     #FCA5A5;
+  --rail-w:       72px;   /* 레일 접힘 기본 (아이콘 52 + 좌우 10). 붙임 중에는 실제 폭으로 덮어쓴다 */
+  --rail-icon:    52px;
+  --rail-drag-h:  18px;   /* 최상단 드래그 띠 — 장식을 껐으니 여기로 창을 옮긴다 */
+  --grip-w:       10px;
+}

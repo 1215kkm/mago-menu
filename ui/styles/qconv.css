@@ -1,0 +1,30 @@
+/* 끌다가 바로 바꾸기 고리 (qconv.html) — 창은 투명, 고리만 보인다 */
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
+#ring { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.qc { filter: drop-shadow(0 10px 24px rgba(20, 16, 40, .28)); }
+/* 나타나기는 고리가 처음 뜰 때 한 번만 (qconv.js buildRing) */
+.qc.pop { animation: pop .16s ease-out; }
+@keyframes pop { from { transform: scale(.86); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.qc .track { fill: var(--light-card); }
+.qc .seg path { fill: var(--light-card); stroke: rgba(var(--primary-rgb), .14); stroke-width: 1; transition: fill .08s; }
+.qc .seg .lb { font-size: 17px; font-weight: 800; fill: var(--text-dark); }
+.qc .seg .sb { font-size: 11px; font-weight: 600; fill: var(--text-muted); }
+.qc .seg.on path { fill: url(#g); stroke: none; }
+/* 새로 고른 칸만 살짝 반짝 (10-19 CEO "해당 버튼만 살짝 깜빡이게") */
+.qc .seg.flash path { animation: segflash .22s ease-out; }
+@keyframes segflash { from { opacity: .55; } to { opacity: 1; } }
+.qc .seg.on .lb, .qc .seg.on .sb { fill: var(--text-primary); }
+.qc .seg.dim { opacity: .35; }
+
+.qc .hub { fill: var(--light-card); stroke: rgba(var(--primary-rgb), .25); stroke-width: 2; }
+.qc .hub.good { fill: var(--success); stroke: none; }
+.qc .hub.bad { fill: var(--error); stroke: none; }
+.qc .ht { font-size: 15px; font-weight: 800; fill: var(--text-dark); }
+.qc .ht.small { font-size: 12px; }
+.qc .hn { font-size: 10px; font-weight: 600; fill: var(--text-muted); }
+.qc .hub.good ~ .ht, .qc .hub.good ~ .hn, .qc .hub.bad ~ .ht, .qc .hub.bad ~ .hn { fill: var(--text-primary); }
+.qc .tick { fill: none; stroke: var(--text-primary); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.qc .pbg { fill: none; stroke: rgba(var(--primary-rgb), .15); stroke-width: 6; }
+.qc .pfg { fill: none; stroke: var(--primary); stroke-width: 6; stroke-linecap: round; transition: stroke-dasharray .15s; }
