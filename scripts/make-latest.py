@@ -19,7 +19,7 @@ sig = io.open(os.path.join(d, 'mago-setup.exe.sig'), encoding='utf-8').read().st
 line = base64.b64decode(sig).decode('utf-8', 'replace').splitlines()[1]
 kid = base64.b64decode(line)[2:10][::-1].hex().upper()
 assert kid == want, f'서명 키가 다르다: {kid} ≠ {want}'
-url = f'https://github.com/1215kkm/mago/releases/download/v{V}/mago-setup.exe'
+url = f'https://github.com/1215kkm/mago-menu/releases/download/v{V}/mago-setup.exe'
 out = {
     'version': V,
     'notes': notes,

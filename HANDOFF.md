@@ -41,8 +41,8 @@
 1. `src-tauri/tauri.conf.json` 의 `version` 올리기 (업데이트는 tauri.conf 판을 본다)
 2. `powershell -ExecutionPolicy Bypass -File scripts\release-build.ps1` — 서명키 `%USERPROFILE%\.mago-keys\`(mago.key · PASSWORD.txt)를 이 창 안에서만 쓴다. **출력·커밋 금지, 다른 곳에 백업.**
 3. `python scripts/make-latest.py 0.1.1 "바뀐 점"` → `release/v0.1.1/` 에 mago-setup.exe · .sig · latest.json
-4. `gh release create v0.1.1 release/v0.1.1/mago-setup.exe release/v0.1.1/mago-setup.exe.sig release/v0.1.1/latest.json -R 1215kkm/mago -t "MAGO 0.1.1" -n "바뀐 점"`
-5. `https://github.com/1215kkm/mago/releases/latest/download/latest.json` 이 새 판인지 확인
+4. `gh release create v0.1.1 release/v0.1.1/mago-setup.exe release/v0.1.1/mago-setup.exe.sig release/v0.1.1/latest.json -R 1215kkm/mago-menu -t "MAGO 0.1.1" -n "바뀐 점"`
+5. `https://github.com/1215kkm/mago-menu/releases/latest/download/latest.json` 이 새 판인지 확인
 
 ## 확인한 것
 - `cargo test --lib` 46개 통과 — 탐색기와 같은 셸 끌기 데이터로 "칸 위 놓기 → 복사로 답함 · 원본 옆 webp · 원본 그대로", "가운데 → 아무것도 안 만듦", "쓰레기통 자리 → 바꾸지 않고 먹이러 감". 정사각(1600×900 → 900×900, 가운데) · 1MB(잡음 3000×2000 → 1MB 이하) · 숨은 메뉴 여는 조건 · 나쁜 내용 파일 거부.

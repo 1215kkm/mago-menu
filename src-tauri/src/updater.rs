@@ -1,4 +1,4 @@
-//! 자동 업데이트 — tauri-plugin-updater + GitHub Releases(1215kkm/mago latest.json) + minisign 서명.
+//! 자동 업데이트 — tauri-plugin-updater + GitHub Releases(1215kkm/mago-menu latest.json) + minisign 서명.
 //! 컴뚝딱 updater.rs 를 줄인 것.
 //!
 //! MAGO 는 트레이에서 늘 켜 두는 프로그램이라 "닫을 때 설치" 로는 영영 안 바뀐다.

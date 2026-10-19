@@ -7,7 +7,7 @@
 - 많이 먹이면… 숨은 메뉴가 열립니다.
 
 ## 설치
-[최신 릴리스](https://github.com/1215kkm/mago/releases/latest)의 `mago-setup.exe` 를 받아 실행하세요. 이후 업데이트는 자동입니다.
+[최신 릴리스](https://github.com/1215kkm/mago-menu/releases/latest)의 `mago-setup.exe` 를 받아 실행하세요. 이후 업데이트는 자동입니다.
 
 ## 개인정보
 파일은 PC 밖으로 나가지 않습니다. 인터넷은 두 가지에만 씁니다: 이 저장소의 숨은 메뉴 내용(`content/content.json`) 받기, 새 판 확인(GitHub 릴리스).
