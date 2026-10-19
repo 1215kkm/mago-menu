@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "_설명": "MAGO 숨은 메뉴·글. 관리자가 이 파일을 고쳐 GitHub main 에 올리면, 켜져 있는 MAGO 가 6시간 안에(또는 다음에 켤 때) 받아 쓴다. version 을 하나 올려야 바뀐 것으로 본다. unlock 종류: feedTotal(쓰레기통에 먹인 횟수) · feedBatch(한 번에 먹인 파일 수) · hour(메뉴를 연 시각, from 이상 to 미만). link 는 https 만.",
+  "hidden": [
+    {
+      "id": "trash_note",
+      "name": "쓰레기통의 쪽지",
+      "unlock": { "type": "feedTotal", "count": 5 },
+      "reward": {
+        "title": "오늘의 글",
+        "body": "쓰레기통이 배불리 먹고 남긴 쪽지예요.\n\n오늘도 파일 정리하느라 수고했어요. 정리한 만큼 마음도 가벼워졌길.\n크라우니클래스 사람들은 요즘 무슨 이야기를 하고 있을까요?",
+        "link": "https://crownyclass.com/community.html?board=hangout",
+        "linkLabel": "자세히 보기"
+      }
+    },
+    {
+      "id": "night_owl",
+      "name": "새벽 손님",
+      "unlock": { "type": "hour", "from": 0, "to": 5 },
+      "reward": {
+        "title": "새벽 손님",
+        "body": "이 시간에 파일을 정리하는 사람은 많지 않아요.\n\n오늘 할 일은 여기까지만. 따뜻한 물 한 잔 마시고 푹 자요."
+      }
+    },
+    {
+      "id": "big_bite",
+      "name": "한입에 열 개",
+      "unlock": { "type": "feedBatch", "count": 10 },
+      "reward": {
+        "title": "왕관을 받았어요",
+        "body": "한 번에 열 개를 꿀꺽!\n\n쓰레기통이 오늘부터 당신을 '정리의 왕'이라고 부르기로 했대요."
+      }
+    }
+  ]
+}

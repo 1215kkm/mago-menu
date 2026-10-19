@@ -4,8 +4,8 @@ use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW};
 
-const MUTEX_NAME: &str = "Local\\ShiftMenu.SingleInstance";
-pub const WINDOW_TITLE: &str = "시프트 메뉴";
+const MUTEX_NAME: &str = "Local\\Mago.SingleInstance";
+pub const WINDOW_TITLE: &str = "MAGO";
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

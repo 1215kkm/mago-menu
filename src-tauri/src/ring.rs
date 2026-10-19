@@ -1,4 +1,4 @@
-//! **시프트 메뉴** — 컴뚝딱(D:\computer) `src-tauri/src/imagery/quick.rs` 를 떼어 와 혼자 도는 프로그램으로 만든 것 (2026-10-20).
+//! **MAGO** — 컴뚝딱(D:\computer) `src-tauri/src/imagery/quick.rs` 를 떼어 와 혼자 도는 프로그램으로 만든 것 (2026-10-20).
 //! 아래 머리말은 컴뚝딱 때 그대로다. 설정 화면 이름만 다르다(컴뚝딱 '파일 형식 바꾸기' → 여기 `ui/index.html`).
 //!
 //! **끌다가 바로 바꾸기** (10-19 CEO "파일 선택하고 이동하다가 시프트 누르면 나오는 메뉴 — 우리 컴뚝딱 설치한 사람도 그렇게 쓸 수 있도록").
@@ -33,14 +33,21 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 const LABEL: &str = "qconv";
-/// 고리 창 한 변 (논리 px). 고리 바깥 반지름 175 + 그림자 여유
-pub const SIZE: f64 = 380.0;
-/// 칸으로 치는 거리 (논리 px, 가운데에서). 이보다 안쪽은 "취소", 바깥도 "취소"
-pub const R_IN: f64 = 62.0;
-pub const R_OUT: f64 = 178.0;
+/// 고리 창 한 변 (논리 px). 고리 + 오른쪽 아래 쓰레기통 + 하트·반짝이 여유
+pub const SIZE: f64 = 560.0;
+/// 칸으로 치는 거리 (논리 px, 가운데에서). 이보다 안쪽은 "취소", 바깥도 "취소".
+/// MAGO 에서 고리를 조금 줄였다(178 → 150) — 바깥에 쓰레기통이 산다
+pub const R_IN: f64 = 54.0;
+pub const R_OUT: f64 = 150.0;
+/// 쓰레기통 자리 (고리 가운데에서 논리 px, 오른쪽 아래 45°). qconv.js 의 TRASH 와 같아야 한다
+pub const TRASH_X: f64 = 162.0;
+pub const TRASH_Y: f64 = 162.0;
+/// 쓰레기통 가운데에서 이 안에 놓으면 먹는다
+pub const EAT_R: f64 = 66.0;
 const PREFS_KEY: &str = "quickConvert";
 
-pub const IMAGE_OPTS: &[&str] = &["png", "jpg", "webp", "bmp", "gif"];
+/// square = SNS 정사각 1080 · small = 1MB 이하 JPG (actions.rs)
+pub const IMAGE_OPTS: &[&str] = &["png", "jpg", "webp", "bmp", "gif", "square", "small"];
 pub const AUDIO_OPTS: &[&str] = &["mp3", "wav"];
 pub const PDF_OPTS: &[&str] = &["jpg-pages", "jpg-one", "png-pages", "png-one"];
 
@@ -72,7 +79,8 @@ impl Default for Settings {
             // 컴뚝딱이 켜져 있으면 늘 되는 기능 (머리말). 끄는 건 '파일 형식 바꾸기' 화면에서
             enabled: true,
             key: "shift".into(),
-            image: IMAGE_OPTS.iter().map(|s| s.to_string()).collect(),
+            // BMP·GIF 는 설정에서 켤 수 있다 — 기본 고리는 자주 쓰는 다섯 칸
+            image: ["png", "jpg", "webp", "square", "small"].iter().map(|s| s.to_string()).collect(),
             audio: AUDIO_OPTS.iter().map(|s| s.to_string()).collect(),
             pdf: vec!["jpg-pages".into(), "jpg-one".into(), "png-pages".into()],
             quality: 92,
@@ -177,6 +185,8 @@ fn seg_of(id: &str) -> Seg {
         "webp" => ("WEBP", "작은 용량"),
         "bmp" => ("BMP", "압축 없음"),
         "gif" => ("GIF", "256색"),
+        "square" => ("정사각", "SNS 1080"),
+        "small" => ("1MB", "카톡·메일"),
         "mp3" => ("MP3", "192kbps"),
         "wav" => ("WAV", "압축 없음"),
         "jpg-pages" => ("JPG", "쪽마다"),
@@ -228,6 +238,11 @@ pub fn hit(dx: f64, dy: f64, n: usize) -> Option<usize> {
     Some(((t / (360.0 / n as f64)) as usize).min(n - 1))
 }
 
+/// 쓰레기통 위인가 (고리 가운데에서 (dx, dy) 논리 px)
+pub fn on_trash(dx: f64, dy: f64) -> bool {
+    (dx - TRASH_X).hypot(dy - TRASH_Y) <= EAT_R
+}
+
 fn request(target: &str, files: Vec<String>, out_dir: &Path, s: &Settings) -> ExtRequest {
     let mut r = ExtRequest {
         files,
@@ -267,7 +282,14 @@ struct Ring {
     paths: Vec<String>,
     plan: Plan,
     hover: Option<usize>,
+    /// 쓰레기통 위에 있나
+    trash: bool,
     hide_at: Option<Instant>,
+    /// 못 찾은 숨은 메뉴 수 · 전체 (고리 가운데 작은 글)
+    left: u32,
+    total: u32,
+    /// 이번에 찾은 숨은 메뉴 — 고리가 닫히면 쪽지 방을 연다
+    secret: Option<String>,
 }
 
 static RING: Mutex<Option<Ring>> = Mutex::new(None);
@@ -288,10 +310,29 @@ struct View {
     preview: bool,
     plan: Plan,
     hover: Option<usize>,
+    trash: bool,
+    left: u32,
+    total: u32,
 }
 
 fn view() -> View {
-    ring(|r| View { shown: r.shown, busy: r.busy, preview: r.preview, plan: r.plan.clone(), hover: r.hover })
+    ring(|r| View { shown: r.shown, busy: r.busy, preview: r.preview, plan: r.plan.clone(), hover: r.hover, trash: r.trash, left: r.left, total: r.total })
+}
+
+/// 고리가 떠 있거나 일하는 중인가 (업데이트 설치를 미룬다) — 쪽지 방이 열려 있어도 쓰는 중
+pub fn in_use() -> bool {
+    let busy = ring(|r| r.shown || r.busy || r.secret.is_some());
+    busy || APP.get().and_then(|a| a.get_webview_window("secret")).is_some()
+}
+
+/// 숨은 메뉴 내용이 바뀌었다 (관리자가 새로 올림) — 가운데 숫자를 다시
+pub fn refresh_counts() {
+    let (left, total) = crate::content::left();
+    ring(|r| {
+        r.left = left;
+        r.total = total;
+    });
+    push_view();
 }
 
 /// 고리 창에 알린다. 앱이 없으면(테스트) 조용히 넘어간다
@@ -312,7 +353,7 @@ fn ensure_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
     }
     let url = tauri::WebviewUrl::App("qconv.html".into());
     match tauri::WebviewWindowBuilder::new(app, LABEL, url)
-        .title("시프트 메뉴 고리")
+        .title("MAGO 고리")
         .decorations(false)
         .transparent(true)
         .shadow(false)
@@ -331,7 +372,7 @@ fn ensure_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
             Some(w)
         }
         Err(e) => {
-            crate::log(&format!("[시프트 메뉴] 고리 창을 못 만듦: {e}"));
+            crate::log(&format!("[MAGO] 고리 창을 못 만듦: {e}"));
             None
         }
     }
@@ -369,6 +410,11 @@ fn show_at(app: &AppHandle, cx: i32, cy: i32, preview: bool) {
         .unwrap_or(1.0);
     let px = (SIZE * scale).round() as i32;
     let (x, y) = (cx - px / 2, cy - px / 2);
+    let (left, total) = crate::content::left();
+    // 시각으로 여는 숨은 메뉴 (새벽 손님 등) — 찾았으면 고리가 닫힐 때 쪽지 방을 연다
+    use chrono::Timelike;
+    let found = if preview { None } else { crate::content::on_open(chrono::Local::now().hour()) };
+    let (left, total) = if found.is_some() { crate::content::left() } else { (left, total) };
     ring(|r| {
         r.shown = true;
         r.busy = false;
@@ -378,19 +424,28 @@ fn show_at(app: &AppHandle, cx: i32, cy: i32, preview: bool) {
         r.scale = scale;
         r.paths.clear();
         r.hover = None;
+        r.trash = false;
         r.hide_at = None;
+        r.left = left;
+        r.total = total;
+        if let Some(h) = &found {
+            r.secret = Some(h.id.clone());
+        }
         r.plan = if preview {
             let mut p = plan(&["보기.jpg".to_string()], &settings());
             p.title = "미리 보기".into();
-            p.note = "끌다가 키를 누르면 이렇게 떠요".into();
+            p.note = "끌 때 이렇게 떠요".into();
             p
         } else {
-            Plan { kind: "wait".into(), title: "바로 바꾸기".into(), note: "조금 움직여 주세요".into(), segs: vec![] }
+            Plan { kind: "wait".into(), title: "MAGO".into(), note: "조금 움직여 주세요".into(), segs: vec![] }
         };
     });
     let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
     let _ = w.set_size(tauri::PhysicalSize::new(px as u32, px as u32));
     push_view();
+    if let Some(h) = found {
+        emit("qconv:found", h.name);
+    }
     show_quiet(&w, true);
     // 미리 보기에는 놓기 창을 깔지 않는다 — 보이지 않는 창이 그 자리 클릭을 3초 동안 먹는다
     #[cfg(windows)]
@@ -400,13 +455,15 @@ fn show_at(app: &AppHandle, cx: i32, cy: i32, preview: bool) {
 }
 
 fn hide() {
-    ring(|r| {
+    let secret = ring(|r| {
         r.shown = false;
         r.busy = false;
         r.preview = false;
         r.paths.clear();
         r.hover = None;
+        r.trash = false;
         r.hide_at = None;
+        r.secret.take()
     });
     #[cfg(windows)]
     drop_win::hide();
@@ -414,6 +471,9 @@ fn hide() {
         show_quiet(&w, false);
     }
     push_view();
+    if let (Some(id), Some(app)) = (secret, APP.get()) {
+        crate::content::show_secret(app, &id);
+    }
 }
 
 // ── 놓기 받은 뒤 ──────────────────────────────────────────────────────────────
@@ -440,7 +500,7 @@ struct Done {
 fn run(paths: Vec<String>, target: String) {
     let s = settings();
     let total = paths.len();
-    crate::log(&format!("[시프트 메뉴] {total}개 → {target}"));
+    crate::log(&format!("[MAGO] {total}개 → {target}"));
     // 원본 폴더마다 묶어 그 폴더에 저장. 못 쓰는 폴더(읽기 전용 USB 등)면 기본 저장 폴더\확장자변경
     let mut groups: Vec<(PathBuf, Vec<String>)> = Vec::new();
     for p in paths {
@@ -462,6 +522,24 @@ fn run(paths: Vec<String>, target: String) {
                 f
             }
         };
+        // 정사각(SNS) · 1MB 는 형식 바꾸기가 아니라 actions.rs 가 한 장씩
+        if target == "square" || target == "small" {
+            for (i, f) in files.iter().enumerate() {
+                emit("qconv:progress", Prog { done: base + i, total, frac: (base + i) as f64 / total.max(1) as f64 });
+                let r = if target == "square" { crate::actions::square(Path::new(f), &dir) } else { crate::actions::small(Path::new(f), &dir) };
+                match r {
+                    Ok(_) => out.made += 1,
+                    Err(e) => {
+                        out.failed += 1;
+                        if out.first_error.is_empty() {
+                            out.first_error = e;
+                        }
+                    }
+                }
+            }
+            base += n;
+            continue;
+        }
         let req = request(&target, files, &dir, &s);
         let mut tick = move |i: usize, _t: usize, cur: &str| {
             // PDF 는 "파일 · 3/40쪽" 으로 온다
@@ -489,7 +567,7 @@ fn run(paths: Vec<String>, target: String) {
         }
         base += n;
     }
-    crate::log(&format!("[시프트 메뉴] 끝 — 만듦 {} · 실패 {} {}", out.made, out.failed, out.first_error));
+    crate::log(&format!("[MAGO] 끝 — 만듦 {} · 실패 {} {}", out.made, out.failed, out.first_error));
     emit("qconv:done", out.clone());
     // 결과를 잠깐 보여 주고 닫는다 (실패면 조금 더 길게 — 이유를 읽을 시간)
     let wait = if out.failed > 0 { 3200 } else { 1400 };
@@ -497,6 +575,53 @@ fn run(paths: Vec<String>, target: String) {
         r.busy = false;
         r.hide_at = Some(Instant::now() + Duration::from_millis(wait));
     });
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct Ate {
+    /// 휴지통으로 간 수
+    count: usize,
+    /// 지금까지 먹인 횟수
+    feeds: u32,
+    /// 이번에 찾은 숨은 메뉴 이름
+    found: Option<String>,
+    error: String,
+    left: u32,
+    total: u32,
+}
+
+/// 쓰레기통에 먹였다 → 윈도우 휴지통으로 (되살릴 수 있다) · 먹인 횟수 · 숨은 메뉴
+fn feed(paths: Vec<String>) {
+    crate::log(&format!("[MAGO] 쓰레기통 {}개", paths.len()));
+    let mut a = Ate::default();
+    #[cfg(windows)]
+    let gone = crate::actions::recycle(&paths);
+    #[cfg(not(windows))]
+    let gone: Result<usize, String> = Err("윈도우에서만 돼요".into());
+    match gone {
+        Ok(k) => {
+            let (feeds, found) = crate::content::on_feed(k);
+            a.count = k;
+            a.feeds = feeds;
+            if let Some(h) = found {
+                a.found = Some(h.name.clone());
+                ring(|r| r.secret = Some(h.id));
+            }
+        }
+        Err(e) => a.error = e,
+    }
+    (a.left, a.total) = crate::content::left();
+    crate::log(&format!("[MAGO] 먹음 {} · 누적 {} · 찾음 {:?} {}", a.count, a.feeds, a.found, a.error));
+    // 씹는 모습(약 2초)을 보여 주고 닫는다. 숨은 메뉴를 찾았으면 배부름 → 응가 → 메뉴까지 (약 5초)
+    let wait = if a.found.is_some() { 5600 } else if a.error.is_empty() { 2600 } else { 3200 };
+    ring(|r| {
+        r.left = a.left;
+        r.total = a.total;
+        r.busy = false;
+        r.hide_at = Some(Instant::now() + Duration::from_millis(wait));
+    });
+    emit("qconv:ate", a);
 }
 
 /// 둥근 창이 받은 끌기 소식
@@ -513,9 +638,12 @@ fn on_enter(paths: Vec<String>) {
 fn on_over(sx: i32, sy: i32) {
     let changed = ring(|r| {
         let s = if r.scale > 0.0 { r.scale } else { 1.0 };
-        let h = hit((sx - r.cx) as f64 / s, (sy - r.cy) as f64 / s, r.plan.segs.len());
-        let c = h != r.hover;
+        let (dx, dy) = ((sx - r.cx) as f64 / s, (sy - r.cy) as f64 / s);
+        let h = hit(dx, dy, r.plan.segs.len());
+        let t = on_trash(dx, dy);
+        let c = h != r.hover || t != r.trash;
         r.hover = h;
+        r.trash = t;
         c
     });
     if changed {
@@ -524,21 +652,33 @@ fn on_over(sx: i32, sy: i32) {
 }
 
 fn on_leave() {
-    ring(|r| r.hover = None);
+    ring(|r| {
+        r.hover = None;
+        r.trash = false;
+    });
     push_view();
 }
 
-/// 놓았다. 칸 위면 바꾸기 시작, 아니면 닫기.
+/// 놓았다. 쓰레기통 위면 먹이고, 칸 위면 바꾸기 시작, 아니면 닫기.
 fn on_drop(paths: Vec<String>, sx: i32, sy: i32) {
-    let pick = ring(|r| {
+    let (pick, trash) = ring(|r| {
         let s = if r.scale > 0.0 { r.scale } else { 1.0 };
         if !paths.is_empty() {
             r.plan = plan(&paths, &settings());
         }
-        let h = hit((sx - r.cx) as f64 / s, (sy - r.cy) as f64 / s, r.plan.segs.len());
+        let (dx, dy) = ((sx - r.cx) as f64 / s, (sy - r.cy) as f64 / s);
+        let h = hit(dx, dy, r.plan.segs.len());
         r.hover = h;
-        h.map(|i| r.plan.segs[i].id.clone())
+        r.trash = on_trash(dx, dy);
+        (h.map(|i| r.plan.segs[i].id.clone()), r.trash)
     });
+    if trash && !paths.is_empty() {
+        ring(|r| r.busy = true);
+        push_view();
+        emit("qconv:eat", paths.len());
+        std::thread::Builder::new().name("mago-feed".into()).spawn(move || feed(paths)).ok();
+        return;
+    }
     match pick {
         Some(target) => {
             ring(|r| r.busy = true);
@@ -561,7 +701,7 @@ mod drop_win {
     use std::os::windows::ffi::OsStringExt;
     use windows::core::{implement, w, Ref};
     use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINTL, WPARAM};
-    use windows::Win32::Graphics::Gdi::{CreateEllipticRgn, SetWindowRgn};
+    use windows::Win32::Graphics::Gdi::{CombineRgn, CreateEllipticRgn, DeleteObject, SetWindowRgn, RGN_OR};
     use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Ole::{IDropTarget, IDropTarget_Impl, OleInitialize, RegisterDragDrop, ReleaseStgMedium, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE};
@@ -577,10 +717,15 @@ mod drop_win {
     pub fn place(x: i32, y: i32, px: i32, scale: f64) {
         let Some(h) = hwnd() else { return };
         unsafe {
-            // 둥글게 — 고리 바깥 모서리는 아래 창으로 그대로 통과한다
+            // 둥글게 — 고리 바깥 모서리는 아래 창으로 그대로 통과한다. 고리 원 + 쓰레기통 원
             let d = ((super::R_OUT + 6.0) * 2.0 * scale).round() as i32;
             let off = (px - d) / 2;
             let rgn = CreateEllipticRgn(off, off, off + d, off + d);
+            let tr = (super::EAT_R * scale).round() as i32;
+            let (tx, ty) = (px / 2 + (super::TRASH_X * scale).round() as i32, px / 2 + (super::TRASH_Y * scale).round() as i32);
+            let t = CreateEllipticRgn(tx - tr, ty - tr, tx + tr, ty + tr);
+            let _ = CombineRgn(Some(rgn), Some(rgn), Some(t), RGN_OR);
+            let _ = DeleteObject(t.into());
             let _ = SetWindowPos(h, Some(HWND_TOPMOST), x, y, px, px, SWP_NOACTIVATE | SWP_SHOWWINDOW);
             let _ = SetWindowRgn(h, Some(rgn), true);
         }
@@ -694,7 +839,7 @@ mod drop_win {
                 target.DragEnter(&data, MODIFIERKEYS_FLAGS(0), POINTL { x: 1100, y: 1010 }, &mut eff).unwrap();
                 assert_eq!(eff, DROPEFFECT_COPY, "끄는 동안에도 복사로 답해야 한다");
                 let segs: Vec<String> = ring(|r| r.plan.segs.iter().map(|g| g.id.clone()).collect());
-                assert_eq!(segs, ["jpg", "webp", "bmp", "gif"], "PNG 를 끌면 PNG 칸은 없다");
+                assert_eq!(segs, ["jpg", "webp", "square", "small"], "PNG 를 끌면 PNG 칸은 없다");
                 assert_eq!(ring(|r| r.hover), Some(1), "오른쪽 조금 아래는 두 번째 칸(WEBP)");
 
                 // 가운데에 놓으면 아무 일도 없다
@@ -720,6 +865,18 @@ mod drop_win {
                 assert!(src.exists(), "원본은 그대로");
                 assert!(ring(|r| r.hide_at.is_some()), "끝나면 잠깐 뒤 닫힐 예정이어야 한다");
 
+                // 쓰레기통 자리에 놓으면 바꾸지 않고 먹이러 간다 (없는 파일이라 휴지통에는 아무것도 안 간다 — 진짜 휴지통은 actions 의 손 확인)
+                ring(|r| { r.shown = true; r.busy = false; r.hide_at = None; r.cx = 1000; r.cy = 1000; r.scale = 1.0; });
+                let ghost = d.join("이미 없는 파일.png").to_string_lossy().to_string();
+                super::super::on_drop(vec![ghost], 1000 + TRASH_X as i32, 1000 + TRASH_Y as i32);
+                assert!(ring(|r| r.trash), "쓰레기통 위로 알아봐야 한다");
+                let t = Instant::now();
+                while ring(|r| r.busy || r.hide_at.is_none()) && t.elapsed() < Duration::from_secs(5) {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                assert!(ring(|r| r.hide_at.is_some()), "먹고 나면 잠깐 뒤 닫힐 예정");
+                assert_eq!(std::fs::read_dir(&d).unwrap().count(), 2, "쓰레기통은 새 파일을 만들지 않는다");
+
                 ILFree(Some(item));
                 ILFree(Some(folder));
                 drop(data);
@@ -734,29 +891,29 @@ mod drop_win {
             .name("qconv-drop".into())
             .spawn(|| unsafe {
                 if OleInitialize(None).is_err() {
-                    crate::log("[시프트 메뉴] OLE 초기화 실패");
+                    crate::log("[MAGO] OLE 초기화 실패");
                     return;
                 }
                 let inst = GetModuleHandleW(None).unwrap_or_default();
-                let class = w!("ShiftMenuDrop");
+                let class = w!("MagoDrop");
                 let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: inst.into(), lpszClassName: class, ..Default::default() };
                 RegisterClassW(&wc);
                 let Ok(h) = CreateWindowExW(
                     WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                     class,
-                    w!("시프트 메뉴 놓기"),
+                    w!("MAGO 놓기"),
                     WS_POPUP,
                     0, 0, 10, 10,
                     None, None, Some(inst.into()), None,
                 ) else {
-                    crate::log("[시프트 메뉴] 놓기 창을 못 만듦");
+                    crate::log("[MAGO] 놓기 창을 못 만듦");
                     return;
                 };
                 // 눈에는 안 보이지만(알파 1/255) 끌기는 받는다. 0 이면 놓기 대상에서 빠질 수 있다
                 let _ = SetLayeredWindowAttributes(h, COLORREF(0), 1, LWA_ALPHA);
                 let target: IDropTarget = Target.into();
                 if let Err(e) = RegisterDragDrop(h, &target) {
-                    crate::log(&format!("[시프트 메뉴] 놓기 등록 실패: {e}"));
+                    crate::log(&format!("[MAGO] 놓기 등록 실패: {e}"));
                     return;
                 }
                 DROP_HWND.store(h.0 as isize, Ordering::SeqCst);
@@ -858,6 +1015,7 @@ mod watch {
                 let mut key_up_since: Option<Instant> = None;
                 let mut up_since: Option<Instant> = None;
                 let mut made_window = false;
+                let mut last_cur = (i32::MIN, i32::MIN);
                 loop {
                     let s = settings();
                     let (shown, busy, hide_at, preview) = ring(|r| (r.shown, r.busy, r.hide_at, r.preview));
@@ -910,7 +1068,7 @@ mod watch {
                             let cap = shell.map(capture_class).unwrap_or_default();
                             if img || (shell.is_some() && !lasso(&cap)) {
                                 fired = true;
-                                crate::log(&format!("[시프트 메뉴] 고리 띄움 (끌기 그림={img} 탐색기에서 시작={} 마우스 잡은 창={cap})", shell.is_some()));
+                                crate::log(&format!("[MAGO] 고리 띄움 (끌기 그림={img} 탐색기에서 시작={} 마우스 잡은 창={cap})", shell.is_some()));
                                 show_at(&app, x, y, false);
                             }
                         }
@@ -921,6 +1079,12 @@ mod watch {
                             hide();
                             up_since = None;
                         }
+                    }
+                    // 쓰레기통이 커서를 바라보고, 가까워지면 입을 벌린다 (qconv.js) — 고리 밖에서도 알아야 해서 놓기 창이 아니라 여기서
+                    if shown && !preview && (x, y) != last_cur {
+                        last_cur = (x, y);
+                        let (cx, cy, sc) = ring(|r| (r.cx, r.cy, if r.scale > 0.0 { r.scale } else { 1.0 }));
+                        emit("qconv:cur", [((x - cx) as f64 / sc).round(), ((y - cy) as f64 / sc).round()]);
                     }
                     if shown && !busy && down(VK_ESCAPE) {
                         hide();
@@ -963,7 +1127,7 @@ pub fn qconv_settings_set(patch: Value) -> Result<Settings, String> {
     }
     let s = serde_json::from_value::<Settings>(v).map_err(|e| format!("설정을 알아보지 못했어요: {e}"))?.clean();
     save(&s)?;
-    crate::log(&format!("[시프트 메뉴] 설정 — 켬={} 키={}", s.enabled, s.key));
+    crate::log(&format!("[MAGO] 설정 — 켬={} 키={}", s.enabled, s.key));
     Ok(s)
 }
 
@@ -1001,6 +1165,18 @@ mod tests {
         assert_eq!(hit(30.0, 30.0, 4), None, "안쪽 원도 취소");
         assert_eq!(hit(300.0, 0.0, 4), None, "고리 바깥도 취소");
         assert_eq!(hit(100.0, 0.0, 0), None, "칸이 없으면 늘 취소");
+    }
+
+    #[test]
+    fn the_trash_sits_outside_the_ring() {
+        assert!(on_trash(TRASH_X, TRASH_Y));
+        assert!(on_trash(TRASH_X - 40.0, TRASH_Y + 40.0));
+        assert!(!on_trash(0.0, 0.0));
+        // 고리 칸과 쓰레기통이 겹치지 않는다 — 고리 바깥 끝(45° 방향)은 쓰레기통 밖
+        let edge = R_OUT / std::f64::consts::SQRT_2;
+        assert!(!on_trash(edge, edge));
+        // 창 안에 다 들어간다
+        assert!(TRASH_X + EAT_R < SIZE / 2.0);
     }
 
     #[test]

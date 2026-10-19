@@ -1,13 +1,13 @@
 [package]
-name = "shift-menu"
+name = "mago"
 version = "0.1.0"
-description = "시프트 메뉴 — 탐색기에서 Shift 를 누른 채 파일을 끌면 뜨는 원형 메뉴"
+description = "MAGO — 탐색기에서 Shift 를 누른 채 파일을 끌면 뜨는 원형 메뉴와 쓰레기통"
 authors = ["1215kkm"]
 edition = "2021"
 rust-version = "1.77"
 
 [lib]
-name = "shift_menu_lib"
+name = "mago_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # 화면(ui/)을 exe 에 늘 품는다 — 개발 서버(devUrl) 없이 `cargo run` 만으로 돈다.
@@ -22,6 +22,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-opener = "2"   # 숨은 방 [자세히 보기] — content.json 에 적힌 https 링크만 (content.rs open_link)
+tauri-plugin-updater = "2"  # GitHub Releases latest.json + minisign 서명 검증 (updater.rs)
+tauri-plugin-process = "2"  # 업데이트 설치 뒤 다시 켜기
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 winreg = "0.55"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }

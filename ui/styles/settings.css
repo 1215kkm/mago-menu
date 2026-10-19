@@ -1,6 +1,6 @@
-/* 시프트 메뉴 설정 창 — 색은 tokens.css (컴뚝딱과 같은 보라→분홍) */
+/* MAGO 설정 창 — 색은 tokens.css (컴뚝딱과 같은 보라→분홍) */
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--light-bg); color: var(--text-dark); font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
+html, body { margin: 0; word-break: keep-all; background: var(--light-bg); color: var(--text-dark); font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 #app { max-width: 720px; margin: 0 auto; padding: 24px 20px 32px; display: flex; flex-direction: column; gap: 16px; }
 .muted { color: var(--text-muted); margin: 4px 0 0; }
 .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -29,3 +29,9 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--light-bor
 .foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: var(--radius-md); background: var(--text-dark); color: var(--text-primary); box-shadow: var(--shadow-lg); }
 .toast.bad { background: var(--error); }
+.found { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.found li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid var(--light-border); border-radius: var(--radius-md); }
+.found li span { font-weight: 700; }
+/* 좁은 폭에서 칩·버튼 줄이 옆으로 넘치지 않게 (flex 항목의 최소 폭 = 내용 폭 이 기본이라 줄어들지 않는다) */
+.row > * { min-width: 0; max-width: 100%; }
+.head > div { min-width: 0; }

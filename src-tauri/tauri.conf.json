@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "시프트 메뉴",
+  "productName": "MAGO",
   "version": "0.1.0",
-  "identifier": "com.shiftmenu.app",
+  "identifier": "com.mago.app",
   "build": {
     "frontendDist": "../ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "settings",
-        "title": "시프트 메뉴",
+        "title": "MAGO",
         "url": "index.html",
         "width": 760,
         "height": 820,
@@ -22,15 +22,40 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://raw.githubusercontent.com"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
     "windows": {
-      "nsis": { "languages": ["Korean"], "installMode": "currentUser", "displayLanguageSelector": false }
+      "nsis": {
+        "languages": [
+          "Korean"
+        ],
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/1215kkm/mago/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3RjY1ODdDMkRBQzQzNUQKUldSZFE2d3RmRmoycDN1c1h5bG9PcTEvR0F0QS9GSis4NVRRMElVZVhGeUtzT0tmSDlreEgvUTEK",
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

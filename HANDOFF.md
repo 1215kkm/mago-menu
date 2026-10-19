@@ -1,64 +1,78 @@
-# 인수인계 — 시프트 메뉴 (2026-10-20)
+# 인수인계 — MAGO (2026-10-20)
 
 ## 어디서 왔나
-- 컴뚝딱 v0.3.45 ~ v0.3.51 에서 만든 '끌어서 바로 바꾸기'(탐색기에서 Shift 끌기 → 원형 메뉴 → 원본 옆에 형식 바꾸기)를 그대로 떼어 왔다.
-- 대표님 결정: 컴뚝딱과 **별개의 프로그램으로 따로 배포**한다. 컴뚝딱에서는 이 기능을 뺀다 (v0.3.52).
+- 컴뚝딱 v0.3.45 ~ v0.3.51 에서 만든 '끌어서 바로 바꾸기'(탐색기에서 Shift 끌기 → 원형 메뉴 → 원본 옆에 형식 바꾸기)를 떼어 왔다.
+- 대표님 결정: 컴뚝딱과 **별개의 프로그램으로 따로 배포**한다. 컴뚝딱에서는 이 기능을 뺐다 (v0.3.52). 이름은 **MAGO** (10-20).
 - 대표님이 컴뚝딱 판으로 실제 탐색기에서 끌어 써 봤다 — 2026-10-19 23:04·23:05 에 png → webp 가 원본 옆에 만들어진 기록이 컴뚝딱 로그에 있다.
 
 ## 지금 되는 것 (v0.1.0)
 - 트레이에서 기다리는 프로그램. 처음 켜면 설정 창이 뜨고, 그 뒤로는 트레이 아이콘을 누르면 뜬다. 창 X = 트레이로 숨기기, 트레이 메뉴·설정 창 [프로그램 끝내기] = 끝내기.
 - 한 번만 실행 (두 번째로 켜면 떠 있는 쪽 설정 창을 앞으로).
-- 탐색기에서 **Shift 를 누르고 있는 동안** 원형 메뉴가 뜬다. 끄는 도중에 눌러도 되고, 떼면 0.25초 뒤 닫힌다(놓을 때 Shift 를 살짝 먼저 떼도 되게). Esc · 가운데 놓기 = 취소.
-- 칸: 그림(png·jpg·webp·bmp·gif 끼리) · 소리(wav ↔ mp3) · PDF(jpg·png 쪽마다 / 한 장으로). 끈 파일 종류에 맞는 칸만, 이미 그 형식이면 그 칸은 뺀다.
-- 설정: 켬/끔(기본 켬) · 누를 키(Shift 기본 · Ctrl · Alt) · 종류별로 보일 칸 · 윈도우 켤 때 트레이에 같이 켜기(HKCU Run, 값 이름 "시프트 메뉴", 기본 끔) · 원형 메뉴 미리 보기.
-- 설정 파일: `%APPDATA%\com.shiftmenu.app\prefs.json` 의 `quickConvert`. 로그: `%APPDATA%\com.shiftmenu.app\logs\app.log` (`[시프트 메뉴]` 줄 — 메뉴를 띄운 이유·바꾼 결과가 남는다).
+- 탐색기에서 **Shift 를 누르고 있는 동안** 원형 메뉴가 뜬다. 끄는 도중에 눌러도 되고, 떼면 0.25초 뒤 닫힌다. Esc · 가운데 놓기 = 취소.
+- 칸 (파일 종류마다 다르다):
+  - 그림: PNG · JPG · WEBP · **정사각(SNS 1080×1080, 가운데를 채워 자름 → `이름_정사각.jpg`)** · **1MB 이하 JPG(카톡·메일 → `이름_1MB.jpg`)** — BMP · GIF 는 설정에서 켠다.
+  - 소리: wav ↔ mp3. PDF: jpg · png (쪽마다 / 한 장으로).
+- **쓰레기통 캐릭터** (고리 오른쪽 아래, 가운데에서 (162,162) px):
+  - 커서가 멀면 숨쉬기(idle) → 가까워지면 입 벌림(wait) → 더 가까우면 별눈(wait_heart) → 위에 오면 덥석(feed_near). 커서 쪽으로 ±7° 기운다. 4.5초 가만히 있으면 잔다(sleep + zzz).
+  - 놓으면: 끌던 파일이 음식이 되어 입으로 날아감 → 먹기·씹기 번갈아(눌렸다 튀어 오름) → 만족(하트) + 말풍선 "냠! N개 먹었어요". 파일은 **윈도우 휴지통**으로 (되살릴 수 있다).
+  - 숨은 메뉴 조건을 채우면: 배부름 → 끙(부들부들) → 응가 → 뚜껑이 빛나며 + 배지 → 고리가 닫히면 **쪽지 방**(화면이 어두워지고 작은 불빛 아래 쪽지, [자세히 보기] = 빨려 들어가며 링크 열기).
+- **숨은 메뉴 수**: 고리 가운데 맨 아래에 작게 "숨은 메뉴 N개"(다 찾으면 "숨은 메뉴 다 찾음"). 설정 창 「숨은 메뉴」 카드에 찾은 것 목록 · [다시 보기] · 먹인 횟수.
+- **관리자 내용 업데이트**: `content/content.json` 을 고쳐 GitHub main 에 올리면, 켜져 있는 MAGO 가 켤 때와 6시간마다 받아 간다(`ui/content-sync.js` → Rust `content_set`). `version` 을 올려야 바뀐 것으로 본다. 자세히는 `content/README.md`.
+- **프로그램 자동 업데이트**: GitHub 릴리스의 latest.json (서명 확인) — 켤 때와 6시간마다 확인, 받아 두었다가 **고리를 안 쓰는 때** 조용히 설치하고 다시 켠다 (`updater.rs`).
+- 설정 파일: `%APPDATA%\com.mago.app\prefs.json` (`quickConvert` 고리 설정 · `mago` 먹인 횟수·찾은 것 · `contentCache` 받은 내용). 로그: `%APPDATA%\com.mago.app\logs\app.log` (`[MAGO]` · `[숨은 메뉴]` · `[내용]` · `[업데이트]`).
 
 ## 파일 지도
 | 파일 | 하는 일 |
 |---|---|
-| `src-tauri/src/lib.rs` | 트레이·설정 창·한 번만 실행·로그 |
-| `src-tauri/src/ring.rs` | **핵심.** 끌기+키 감지(watch) · 원형 메뉴 창 띄우기 · 놓기 받는 둥근 창(drop_win, OLE) · 칸 판정(hit) · 바꾸기 실행 · 설정 |
-| `src-tauri/src/convert/` | 바꾸기 엔진 (컴뚝딱 imagery 에서 그대로): ext_convert · convert · pdf_render(Windows 내장 PDF) |
-| `src-tauri/src/outdir.rs` · `prefs.rs` · `run_key.rs` · `single.rs` | 저장 폴더 · 설정 저장 · 시작프로그램 등록 · 한 번만 실행 |
-| `ui/index.html` · `settings.js` · `styles/settings.css` | 설정 창 |
-| `ui/qconv.html` · `qconv.js` · `styles/qconv.css` | 원형 메뉴 그림 (마우스가 통과하는 창 — 그림만 그린다. 어느 칸 위인지는 Rust 가 알려 준다) |
+| `src-tauri/src/lib.rs` | 트레이·설정 창·한 번만 실행·로그·플러그인 |
+| `src-tauri/src/ring.rs` | **핵심.** 끌기+키 감지(watch) · 고리 창 · 놓기 받는 둥근 창(drop_win, OLE — 고리 원 + 쓰레기통 원) · 칸/쓰레기통 판정 · 바꾸기 · 먹이기(feed) |
+| `src-tauri/src/actions.rs` | 정사각 · 1MB · 휴지통(SHFileOperation, 되살리기 가능) |
+| `src-tauri/src/content.rs` | 숨은 메뉴 내용(번들 사본 · 받은 것 · 검사) · 찾은 것 · 쪽지 방 창 · 링크 열기(내용 파일의 https 만) |
+| `src-tauri/src/updater.rs` | 자동 업데이트 |
+| `src-tauri/src/convert/` | 바꾸기 엔진 (컴뚝딱에서 그대로): ext_convert · convert · pdf_render |
+| `ui/qconv.*` · `styles/qconv.css` | 고리 + 쓰레기통 그림 (마우스가 통과하는 창 — 어느 칸·쓰레기통 위인지는 Rust 가 알려 준다) |
+| `ui/secret.*` · `styles/secret.css` | 쪽지 방 |
+| `ui/index.html` · `settings.js` · `content-sync.js` | 설정 창 · 내용 받기 |
+| `ui/mago/*.webp` | 캐릭터 그림 23장 (대표님이 준 시트를 AI 누끼로 따서 높이 240·같은 바닥선으로 맞춤) |
+| `content/content.json` | 관리자가 고치는 숨은 메뉴 |
+| `scripts/release-build.ps1` · `make-latest.py` | 배포 |
 
-## 끌기 감지 방법 (ring.rs watch)
-왼쪽 버튼을 누른 채 8px 넘게 움직였고 + 키가 눌려 있고 + (셸 끌기 그림 창 `SysDragImage` 가 떠 있음 **또는** 탐색기·바탕화면에서 시작했고 영역 선택(올가미)이 아님).
-올가미 판별: 그 창 스레드에서 마우스를 잡은 창이 `DirectUIHWND`·`SysListView32` 면 올가미. 로그에 "끌기 그림=… 마우스 잡은 창=…" 이 남는다.
+## 배포
+1. `src-tauri/tauri.conf.json` 의 `version` 올리기 (업데이트는 tauri.conf 판을 본다)
+2. `powershell -ExecutionPolicy Bypass -File scripts\release-build.ps1` — 서명키 `%USERPROFILE%\.mago-keys\`(mago.key · PASSWORD.txt)를 이 창 안에서만 쓴다. **출력·커밋 금지, 다른 곳에 백업.**
+3. `python scripts/make-latest.py 0.1.1 "바뀐 점"` → `release/v0.1.1/` 에 mago-setup.exe · .sig · latest.json
+4. `gh release create v0.1.1 release/v0.1.1/mago-setup.exe release/v0.1.1/mago-setup.exe.sig release/v0.1.1/latest.json -R 1215kkm/mago -t "MAGO 0.1.1" -n "바뀐 점"`
+5. `https://github.com/1215kkm/mago/releases/latest/download/latest.json` 이 새 판인지 확인
 
 ## 확인한 것
-- `cargo test --lib` 40개 통과 — 탐색기와 같은 셸 끌기 데이터(SHCreateDataObject)를 놓기 처리기에 넣어 "칸 위 놓기 → 복사로 답함 · 원본 옆 webp 생김 · 원본 그대로", "가운데 놓기 → 아무것도 안 만듦".
-- release exe 를 임시 설정 폴더로 띄워: 첫 실행에 설정 창이 뜸(켬 · Shift), [원형 메뉴 미리 보기] 가 그려짐, [프로그램 끝내기] 로 끝남.
+- `cargo test --lib` 46개 통과 — 탐색기와 같은 셸 끌기 데이터로 "칸 위 놓기 → 복사로 답함 · 원본 옆 webp · 원본 그대로", "가운데 → 아무것도 안 만듦", "쓰레기통 자리 → 바꾸지 않고 먹이러 감". 정사각(1600×900 → 900×900, 가운데) · 1MB(잡음 3000×2000 → 1MB 이하) · 숨은 메뉴 여는 조건 · 나쁜 내용 파일 거부.
+- 고리·쓰레기통 9가지 상태와 쪽지 방, 설정 창을 가짜 데이터로 브라우저에 띄워 화면 확인.
 
-## 확인 못 한 것
-- 이 프로그램으로 **실제 탐색기 끌기** (컴뚝딱 판으로는 대표님이 써 봄).
-- 트레이 아이콘 왼쪽 클릭·메뉴, 윈도우 켤 때 같이 켜기 실제 재부팅.
-- 설치 파일(NSIS) — 아직 안 만들었다.
+## 확인 못 한 것 (대표님 손이 필요)
+- **실제 탐색기 끌기**로 쓰레기통에 먹이기 · 쪽지 방 · [자세히 보기].
+- 트레이 아이콘, 윈도우 켤 때 같이 켜기 실제 재부팅, 설치 파일로 설치 → 다음 판 자동 업데이트.
 
-## 다음에 할 일 (대표님 확인 필요한 것은 ★)
-1. ★ **이름 · 아이콘** — 지금은 임시 이름 "시프트 메뉴", 아이콘은 컴뚝딱 것을 빌려 씀.
-2. ★ **배포 방법** — GitHub 저장소(새로)·설치 파일·자동 업데이트. 업데이트 서명 키는 컴뚝딱과 **따로** 만든다(키 파일은 대표님 PC 의 `~/.komttukttak-keys` 같은 자리에, 절대 출력·커밋 금지). 설치 파일을 만들려면 `@tauri-apps/cli`(npx tauri build) 를 붙인다.
-3. ★ **메뉴에 넣을 기능** — 컴뚝딱 세션에서 대표님께 드린 제안 (아직 안 고르심):
-   - ① 다듬기: 용량 줄이기(카톡·메일용 1MB 이하) · 크기 맞추기(인스타·유튜브·스마트스토어) · 누끼(AI) · 위치 정보(GPS) 지우기
-   - ② 묶기(여러 개 끌 때만): 여러 장 → 한 장(이어붙이기·콜라주) · GIF · PDF 한 권 · ZIP
-   - ③ 섞기(연금술): 서로 다른 파일 둘을 같이 끌면 조합 결과 (사진+사진=비교, 사진+로고=워터마크, 사진+txt=밈) + **조합 도감**("새 조합 발견! 3/12")
-   - ④ 놀기: 사진 퍼즐(9조각) · 오늘의 파일 운세 · 픽셀아트 · 파일 무게 재기
-   - 칸이 많아지면 **두 겹 고리**(안쪽 묶음 · 바깥쪽 기능) 제안.
-   - 컴뚝딱(D:\computer)에 이미 있는 코드: 크기 맞추기 `imagery/resize.rs` · 이어붙이기 `stitch.rs` · GIF `gif_slot.rs` · AI 누끼 `ai_cutout.rs`(모델 185MB 처음 쓸 때 받기) · 워터마크 `watermark.rs` · 용량 맞추기 `convert::save_within`.
-4. 고리 칸 판정·그림 배치는 `ring.rs hit()` 와 `qconv.js` 가 같아야 한다 (12시에서 시계 방향, 반지름 62~178).
+## 캐릭터 그림 — 더 부드럽게 하려면 (대표님께 드린 목록)
+지금은 시트의 15자세를 겹쳐 넘기기(0.09초)로 잇는다. 아래를 같은 캐릭터·같은 크기(투명 PNG, 높이 240 안팎, 발 위치 같게)로 받으면 끊김이 줄어든다:
+`blink_1~2`(눈 깜빡) · `mouth_open_1~3`(idle → wait 사이) · `chew_1~4`(씹기 한 바퀴) · `drool_1~3`(침 방울) · `poop_1~4`(끙 → 응가) · `lid_open_1~3`(뚜껑 열림) · `fx_zzz`·`icon_plus`(배경 없는 것 — 지금은 CSS 로 그림) · `feed_near` 손 없는 판.
+
+## 다음에 할 일 (★ = 대표님 결정)
+1. ★ 숨은 메뉴 더 넣기 — 대표님 메모의 나머지(1분 탈출구 · 타임캡슐 · 파일 조합 해금 · 30초 미니게임 · 소리의 방 · 파일 감별사)를 어떤 순서로.
+2. ★ "응가 → 추가 메뉴" 의 추가 메뉴를 쪽지 말고 진짜 기능(예: 미니게임)으로 열지.
+3. 메뉴 칸이 많아지면 두 겹 고리.
 
 ## 컴뚝딱에서 겪은 함정 (다시 밟지 말 것)
 - **wry 놓기 처리기는 Drop 때 DROPEFFECT 를 정하지 않는다** → Shift 끌기에서 원본이 지워질 수 있다. 그래서 놓기 창을 직접 만들었다.
-- Tauri `show()` 는 창을 활성화할 수 있다 → 메뉴는 `ShowWindow(SW_SHOWNOACTIVATE)` 로 띄운다(끌던 탐색기 포커스 유지).
-- 메뉴 위에서 칸을 옮길 때마다 통째로 다시 그리면 깜빡인다 → 한 번만 그리고 칸 색·가운데 글만 고친다 (대표님 지적).
+- Tauri `show()` 는 창을 활성화할 수 있다 → 고리는 `ShowWindow(SW_SHOWNOACTIVATE)` 로 띄운다.
+- 고리 위에서 칸을 옮길 때마다 통째로 다시 그리면 깜빡인다 → 한 번만 그리고 칸 색·가운데 글만 고친다 (대표님 지적).
 - 테스트 exe 는 매니페스트가 없어 comctl32 v6 함수에서 안 뜬다 → build.rs 가 debug 에서 comctl32 지연 로드.
-- `cargo` 가 옛 경로(`C:\Users\…\computer`)를 가리키는 tauri 빌드 캐시로 실패하면 `cargo clean -p tauri` (release 는 `--release`).
+- `cargo` 가 옛 경로를 가리키는 tauri 빌드 캐시로 실패하면 `cargo clean -p tauri` (release 는 `--release`).
 - 시험용 exe 를 띄울 때는 `APPDATA`·`LOCALAPPDATA` 를 임시 폴더로 — 대표님 설정을 건드리지 않게. 예 (PowerShell):
   ```
-  $psi = New-Object System.Diagnostics.ProcessStartInfo "D:\shift-menu\src-tauri\target\release\shift-menu.exe"
+  $psi = New-Object System.Diagnostics.ProcessStartInfo "D:\shift-menu\src-tauri\target\release\mago.exe"
   $psi.UseShellExecute = $false
   $psi.EnvironmentVariables["APPDATA"] = "<임시>\roaming"; $psi.EnvironmentVariables["LOCALAPPDATA"] = "<임시>\local"
   [System.Diagnostics.Process]::Start($psi)
   ```
   화면 버튼은 UI Automation(InvokePattern)으로 누르면 마우스를 안 움직인다.
+- 화면을 브라우저로 볼 때 Windows 의 `python -m http.server` 는 .js 를 text/plain 으로 줘서 모듈이 안 뜬다 → 확장자별 형식을 정해 주는 작은 서버를 쓴다.

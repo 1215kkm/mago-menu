@@ -1,16 +1,20 @@
-// settings.js — 시프트 메뉴 설정 창.
+// settings.js — MAGO 설정 창.
 // 컴뚝딱 app/modules/file-converter/quick.js 의 화면을 혼자 도는 페이지로 옮긴 것 (2026-10-20).
-// 값은 Rust 가 들고 있다: qconv_settings_get / qconv_settings_set · autostart_get / autostart_set · qconv_preview.
+// 값은 Rust 가 들고 있다: qconv_settings_get / qconv_settings_set · autostart_get / autostart_set · qconv_preview
+// · mago_state(먹인 횟수 · 찾은 숨은 메뉴) · secret_show([다시 보기]).
+// 이 창은 숨어 있어도 늘 떠 있어서, 관리자가 고친 숨은 메뉴 내용(content.json)도 여기서 받는다 (content-sync.js).
+import { syncContent } from './content-sync.js';
 
 const T = window.__TAURI__;
 const invoke = (cmd, args) => T.core.invoke(cmd, args);
 
 const KEYS = [{ id: 'shift', label: 'Shift' }, { id: 'ctrl', label: 'Ctrl' }, { id: 'alt', label: 'Alt' }];
-const IMAGE = [{ id: 'png', label: 'PNG' }, { id: 'jpg', label: 'JPG' }, { id: 'webp', label: 'WEBP' }, { id: 'bmp', label: 'BMP' }, { id: 'gif', label: 'GIF' }];
+const IMAGE = [{ id: 'png', label: 'PNG' }, { id: 'jpg', label: 'JPG' }, { id: 'webp', label: 'WEBP' }, { id: 'bmp', label: 'BMP' }, { id: 'gif', label: 'GIF' },
+  { id: 'square', label: '정사각 (SNS 1080)' }, { id: 'small', label: '1MB 이하' }];
 const AUDIO = [{ id: 'mp3', label: 'MP3' }, { id: 'wav', label: 'WAV' }];
 const PDF = [{ id: 'jpg-pages', label: 'JPG 쪽마다' }, { id: 'jpg-one', label: 'JPG 한 장으로' }, { id: 'png-pages', label: 'PNG 쪽마다' }, { id: 'png-one', label: 'PNG 한 장으로' }];
 
-const S = { s: null, run: false, err: null, toast: null };
+const S = { s: null, run: false, err: null, toast: null, m: null };
 const app = document.getElementById('app');
 
 function el(tag, attrs, kids) {
@@ -72,7 +76,7 @@ function render() {
   const toggle = (field) => (id, add) => set({ [field]: add ? s[field].concat(id) : s[field].filter((x) => x !== id) });
 
   const head = el('header', { class: 'head' }, [
-    el('div', {}, [el('h1', {}, ['시프트 메뉴']), el('p', { class: 'muted' }, ['탐색기에서 ', el('kbd', {}, [keyName]), ' 를 누른 채 파일을 끌면 커서 둘레에 원형 메뉴가 떠요.'])]),
+    el('div', {}, [el('h1', {}, ['MAGO']), el('p', { class: 'muted' }, ['탐색기에서 ', el('kbd', {}, [keyName]), ' 를 누른 채 파일을 끌면 커서 둘레에 원형 메뉴가 떠요.'])]),
     el('span', { class: `state${s.enabled ? ' on' : ''}` }, [s.enabled ? '켜져 있어요' : '꺼져 있어요']),
   ]);
 
@@ -94,7 +98,20 @@ function render() {
     })),
     el('div', { class: 'actions' }, [el('button', { type: 'button', class: 'btn', onclick: () => invoke('qconv_preview').catch((e) => toast(String(e), true)) }, ['원형 메뉴 미리 보기'])]),
     el('p', { class: 'hint' }, [`이 프로그램이 켜져 있을 때만 돼요 (창을 닫아도 트레이에 있으면 돼요). JPG 는 화질 ${s.quality}, PDF 는 ${s.dpi}dpi 로 만들어요.`]),
-    el('p', { class: 'hint' }, ['메뉴 위에 놓은 파일은 복사로만 받아서 원본이 지워지거나 옮겨지지 않아요.']),
+    el('p', { class: 'hint' }, ['메뉴 위에 놓은 파일은 복사로만 받아서 원본이 지워지거나 옮겨지지 않아요. 쓰레기통에 놓은 파일만 윈도우 휴지통으로 가요.']),
+  ]);
+
+  const m = S.m;
+  const secret = m && el('section', { class: 'card' }, [
+    el('h2', {}, ['숨은 메뉴']),
+    el('p', { class: 'muted' }, [`찾은 것 ${m.found.length} / ${m.total} · 쓰레기통에 먹인 횟수 ${m.feeds}번`]),
+    m.found.length
+      ? el('ul', { class: 'found' }, m.found.map((f) => el('li', {}, [
+        el('span', {}, [f.name]),
+        el('button', { type: 'button', class: 'btn', onclick: () => invoke('secret_show', { id: f.id }).catch((e) => toast(String(e), true)) }, ['다시 보기']),
+      ])))
+      : el('p', { class: 'hint' }, ['아직 하나도 못 찾았어요. 원형 메뉴 오른쪽 아래 쓰레기통에 파일을 먹여 보세요.']),
+    m.left ? el('p', { class: 'hint' }, [`못 찾은 숨은 메뉴가 ${m.left}개 더 있어요. 어떻게 여는지는 비밀이에요.`]) : null,
   ]);
 
   const how = el('section', { class: 'card' }, [
@@ -103,9 +120,10 @@ function render() {
       el('li', {}, ['탐색기(다운로드 폴더 등)에서 바꿀 파일을 고르세요. 여러 개도 돼요.']),
       el('li', {}, [el('kbd', {}, [keyName]), ' 를 누르고 있는 동안 원형 메뉴가 떠요. 끄는 도중에 눌러도 되고, 떼면 닫혀요.']),
       el('li', {}, ['원하는 칸 위에서 놓으면 ', el('b', {}, ['원본 옆에']), ' 바뀐 파일이 생겨요. 원본은 그대로예요.']),
+      el('li', {}, ['오른쪽 아래 ', el('b', {}, ['쓰레기통']), '에 놓으면 냠냠 먹고 윈도우 휴지통으로 보내요. 휴지통에서 되살릴 수 있어요.']),
       el('li', {}, ['그만두려면 가운데에 놓거나 Esc. 메뉴 밖 다른 폴더에 놓으면 윈도우가 평소처럼 옮겨요.']),
     ]),
-    el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로).']),
+    el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로).']),
   ]);
 
   const foot = el('footer', { class: 'foot' }, [
@@ -113,7 +131,7 @@ function render() {
     el('button', { type: 'button', class: 'btn ghost', onclick: () => invoke('app_quit') }, ['프로그램 끝내기']),
   ]);
 
-  const kids = [head, main, how, foot];
+  const kids = [head, main, secret, how, foot].filter(Boolean);
   if (S.toast) kids.push(el('div', { class: `toast${S.toast.bad ? ' bad' : ''}`, role: 'status' }, [S.toast.msg]));
   app.replaceChildren(...kids);
 }
@@ -124,4 +142,12 @@ function render() {
     S.run = (await invoke('autostart_get')).on;
   } catch (e) { S.err = `설정을 읽지 못했어요: ${e}`; }
   render();
+  loadMago();
 })();
+
+async function loadMago() {
+  try { S.m = await invoke('mago_state'); render(); } catch (e) { console.error(e); }
+}
+// 창을 다시 열 때(트레이) 숨은 메뉴 수가 바뀌었을 수 있다
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadMago(); });
+syncContent(() => loadMago());

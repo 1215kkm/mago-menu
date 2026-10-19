@@ -1,24 +1,33 @@
-//! 시프트 메뉴 — 탐색기에서 Shift 를 누른 채 파일을 끌면 커서 둘레에 원형 메뉴가 뜨고, 칸에 놓으면 원본 옆에 바꾼 파일을 만든다.
-//! 컴뚝딱(D:\computer)의 '끌어서 바로 바꾸기'를 떼어 와 혼자 도는 프로그램으로 만든 것. 컴뚝딱 쪽 기능은 그대로 있다.
+//! **MAGO** — 탐색기에서 Shift 를 누른 채 파일을 끌면 커서 둘레에 원형 메뉴가 뜨고, 칸에 놓으면 원본 옆에 바꾼 파일을 만든다.
+//! 고리 오른쪽 아래에는 쓰레기통 캐릭터가 산다 — 파일을 먹이면 윈도우 휴지통으로 보내고, 많이 먹이면 숨은 메뉴가 열린다.
+//! 컴뚝딱(D:\computer)의 '끌어서 바로 바꾸기'를 떼어 와 혼자 도는 프로그램으로 만든 것 (10-20 컴뚝딱에서는 뺐다).
+//!
+//! - `ring.rs`    : 끌기 감시 · 고리 · 놓기 창 · 쓰레기통 먹이기
+//! - `actions.rs` : 정사각(SNS) · 1MB · 휴지통
+//! - `content.rs` : 숨은 메뉴 내용(관리자가 GitHub 에서 고침) · 찾은 것 · 쪽지 방 창
+//! - `updater.rs` : 프로그램 자동 업데이트
 //!
 //! 늘 트레이에서 기다린다. 설정 창(`settings`, ui/index.html)은 처음 켤 때 · 트레이를 누를 때 · 두 번째로 켤 때만 보인다.
 //! 설정 창 X 는 끝내기가 아니라 숨기기다 (끝내기는 트레이 메뉴 [끝내기]).
 
+mod actions;
+mod content;
 mod convert;
 mod outdir;
 mod prefs;
 mod ring;
 mod run_key;
 mod single;
+mod updater;
 
 use std::io::Write;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
-/// `%APPDATA%\com.shiftmenu.app\logs\app.log` 에 한 줄
+/// `%APPDATA%\com.mago.app\logs\app.log` 에 한 줄
 pub fn log(line: &str) {
-    let Some(dir) = std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("com.shiftmenu.app").join("logs")) else { return };
+    let Some(dir) = std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("com.mago.app").join("logs")) else { return };
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("app.log")) {
         let _ = writeln!(f, "{} [pid {}] {line}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"), std::process::id());
@@ -75,11 +84,20 @@ pub fn run() {
     let first_run = prefs::path().map(|p| !p.exists()).unwrap_or(true);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             ring::qconv_settings_get,
             ring::qconv_settings_set,
             ring::qconv_view,
             ring::qconv_preview,
+            content::mago_state,
+            content::content_set,
+            content::mago_reward,
+            content::secret_show,
+            content::secret_close,
+            content::open_link,
             autostart_get,
             autostart_set,
             app_quit,
@@ -90,7 +108,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&open, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().cloned().expect("아이콘"))
-                .tooltip("시프트 메뉴 — 탐색기에서 Shift 를 누른 채 파일을 끌어 보세요")
+                .tooltip("MAGO — 탐색기에서 Shift 를 누른 채 파일을 끌어 보세요")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id.as_ref() {
@@ -105,6 +123,7 @@ pub fn run() {
                 })
                 .build(app)?;
             ring::start(app.handle().clone());
+            updater::spawn(app.handle().clone());
             if first_run || !tray_only {
                 show_settings(app.handle());
             }
@@ -120,5 +139,5 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("시프트 메뉴 실행 실패");
+        .expect("MAGO 실행 실패");
 }

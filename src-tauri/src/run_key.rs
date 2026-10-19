@@ -10,7 +10,7 @@ use winreg::RegKey;
 
 pub const RUN_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 /// 레지스트리에 보일 이름. 사용자가 작업 관리자 [시작프로그램] 에서 이 이름을 본다.
-pub const VALUE_NAME: &str = "시프트 메뉴";
+pub const VALUE_NAME: &str = "MAGO";
 /// 트레이 대기 모드로 켜라는 표시. 이 인자로 켜지면 설정 창을 띄우지 않는다.
 pub const TRAY_ARG: &str = "--tray";
 

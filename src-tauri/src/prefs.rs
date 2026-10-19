@@ -1,4 +1,4 @@
-//! 사용자가 정한 값을 **앱을 껐다 켜도 기억한다.** (`%APPDATA%\com.shiftmenu.app\prefs.json`)
+//! 사용자가 정한 값을 **앱을 껐다 켜도 기억한다.** (`%APPDATA%\com.mago.app\prefs.json`)
 //!
 //! ## 왜 생겼나 — 저장 번호가 거짓말을 하고 있었다
 //! 화면은 "번호가 저절로 이어져요" 라고 적혀 있는데, 다음 번호는 메모리에만 있었다.
@@ -40,7 +40,7 @@ pub fn path() -> Option<PathBuf> {
         return Some(p);
     }
     let appdata = std::env::var_os("APPDATA")?;
-    Some(PathBuf::from(appdata).join("com.shiftmenu.app").join("prefs.json"))
+    Some(PathBuf::from(appdata).join("com.mago.app").join("prefs.json"))
 }
 
 fn empty() -> Value {

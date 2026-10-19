@@ -22,7 +22,7 @@ use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::SHGetKnownFolderPath;
 
 /// 우리가 만드는 폴더 이름. 사용자가 탐색기에서 이 이름을 읽는다.
-pub const BASE_FOLDER: &str = "시프트 메뉴";
+pub const BASE_FOLDER: &str = "MAGO";
 
 /// FOLDERID_Documents = {FDD39AD0-238F-46AF-ADB4-6C85480369C7}
 const FOLDERID_DOCUMENTS: GUID = GUID {

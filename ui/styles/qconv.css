@@ -1,16 +1,19 @@
-/* 끌다가 바로 바꾸기 고리 (qconv.html) — 창은 투명, 고리만 보인다 */
+/* MAGO 고리 (qconv.html) — 창은 투명, 고리와 쓰레기통만 보인다 */
 html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
 body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 #ring { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
-.qc { filter: drop-shadow(0 10px 24px rgba(20, 16, 40, .28)); }
-/* 나타나기는 고리가 처음 뜰 때 한 번만 (qconv.js buildRing) */
-.qc.pop { animation: pop .16s ease-out; }
+.stage { position: relative; width: 560px; height: 560px; flex: none; }
+.qc { position: absolute; inset: 0; filter: drop-shadow(0 10px 24px rgba(20, 16, 40, .28)); }
+/* 나타나기는 처음 뜰 때 한 번만 — 고리가 먼저, 쓰레기통이 살짝 뒤에 (규칙 35 주인공 먼저) */
+.stage.pop .qc { animation: pop .18s ease-out; transform-origin: 280px 280px; }
+.stage.pop .mago { animation: hop .34s .08s cubic-bezier(.3, 1.5, .5, 1) both; }
 @keyframes pop { from { transform: scale(.86); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes hop { from { transform: translateY(18px) scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }
 
 .qc .track { fill: var(--light-card); }
 .qc .seg path { fill: var(--light-card); stroke: rgba(var(--primary-rgb), .14); stroke-width: 1; transition: fill .08s; }
-.qc .seg .lb { font-size: 17px; font-weight: 800; fill: var(--text-dark); }
-.qc .seg .sb { font-size: 11px; font-weight: 600; fill: var(--text-muted); }
+.qc .seg .lb { font-size: 16px; font-weight: 800; fill: var(--text-dark); }
+.qc .seg .sb { font-size: 10.5px; font-weight: 600; fill: var(--text-muted); }
 .qc .seg.on path { fill: url(#g); stroke: none; }
 /* 새로 고른 칸만 살짝 반짝 (10-19 CEO "해당 버튼만 살짝 깜빡이게") */
 .qc .seg.flash path { animation: segflash .22s ease-out; }
@@ -21,10 +24,66 @@ body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 .qc .hub { fill: var(--light-card); stroke: rgba(var(--primary-rgb), .25); stroke-width: 2; }
 .qc .hub.good { fill: var(--success); stroke: none; }
 .qc .hub.bad { fill: var(--error); stroke: none; }
-.qc .ht { font-size: 15px; font-weight: 800; fill: var(--text-dark); }
+.qc .ht { font-size: 14px; font-weight: 800; fill: var(--text-dark); }
 .qc .ht.small { font-size: 12px; }
 .qc .hn { font-size: 10px; font-weight: 600; fill: var(--text-muted); }
+/* 못 찾은 숨은 메뉴 수 — 가운데 맨 아래 작게 */
+.qc .hc { font-size: 10px; font-weight: 800; fill: var(--primary); }
 .qc .hub.good ~ .ht, .qc .hub.good ~ .hn, .qc .hub.bad ~ .ht, .qc .hub.bad ~ .hn { fill: var(--text-primary); }
 .qc .tick { fill: none; stroke: var(--text-primary); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
 .qc .pbg { fill: none; stroke: rgba(var(--primary-rgb), .15); stroke-width: 6; }
 .qc .pfg { fill: none; stroke: var(--primary); stroke-width: 6; stroke-linecap: round; transition: stroke-dasharray .15s; }
+
+/* ── 쓰레기통 캐릭터 ── 170×120 상자, 발이 상자 바닥에 */
+.mago { position: absolute; width: 170px; height: 120px; pointer-events: none; }
+.mago .tilt { position: absolute; inset: 0; transform-origin: 50% 100%; transition: transform .25s ease-out; }
+.mago .squash { position: absolute; inset: 0; transform-origin: 50% 100%; }
+.mago .breath { position: absolute; inset: 0; transform-origin: 50% 100%; animation: breath 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 6px 8px rgba(20, 16, 40, .25)); }
+@keyframes breath { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, 1.035); } }
+.mago .pose { position: absolute; bottom: 0; left: 50%; height: 120px; width: auto; transform: translateX(-50%);
+  opacity: 0; transition: opacity .09s linear; }
+.mago .pose.on { opacity: 1; }
+/* 씹을 때마다 꾹 눌렸다 튀어 오른다 */
+.mago .squash.chomp { animation: chomp .17s ease-out; }
+@keyframes chomp { 0% { transform: scale(1.06, .92); } 60% { transform: scale(.98, 1.04); } 100% { transform: none; } }
+/* 끙 — 응가 직전 부들부들 */
+.mago .squash.shake { animation: shake .09s linear infinite; }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px) rotate(-1deg); } 75% { transform: translateX(2px) rotate(1deg); } }
+/* 자는 동안은 숨을 느리고 깊게 */
+.mago.sleeping .breath { animation-duration: 3.6s; }
+
+/* 머리 위 효과 — 떠오르며 사라진다 */
+.mago .fx { position: absolute; left: 50%; top: -18px; transform: translateX(-50%); }
+.mago .fx img { display: block; height: 34px; width: auto; animation: rise 1.1s ease-out both; }
+@keyframes rise { from { transform: translateY(10px) scale(.7); opacity: 0; } 25% { opacity: 1; } to { transform: translateY(-26px) scale(1); opacity: 0; } }
+
+/* 잠 — zzz 가 하나씩 떠오른다 */
+.mago .zzz { position: absolute; left: 34px; top: 22px; display: none; font-weight: 900; color: rgba(var(--primary-rgb), .85); }
+.mago.sleeping .zzz { display: block; }
+.mago .zzz span { position: absolute; opacity: 0; animation: zz 2.4s ease-out infinite; }
+.mago .zzz span:nth-child(1) { font-size: 12px; animation-delay: 0s; }
+.mago .zzz span:nth-child(2) { font-size: 15px; animation-delay: .8s; }
+.mago .zzz span:nth-child(3) { font-size: 19px; animation-delay: 1.6s; }
+@keyframes zz { 0% { transform: translate(0, 0); opacity: 0; } 20% { opacity: 1; } 100% { transform: translate(14px, -30px); opacity: 0; } }
+
+/* 숨은 메뉴 열림 — 뚜껑 위 + 배지 */
+.mago .plus { position: absolute; left: 50%; top: -14px; width: 30px; height: 30px; margin-left: -15px; border-radius: 50%;
+  background: var(--gradient); color: #fff; font: 900 22px/30px 'Pretendard Variable', sans-serif; text-align: center;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, .8), 0 6px 16px rgba(var(--primary-rgb), .5); transform: scale(0); opacity: 0; }
+.mago.opened .plus { animation: plus .45s cubic-bezier(.3, 1.6, .5, 1) both, glow 1.2s .45s ease-in-out infinite; }
+@keyframes plus { from { transform: scale(0) rotate(-90deg); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes glow { 50% { box-shadow: 0 0 0 4px rgba(255, 255, 255, .8), 0 0 22px rgba(var(--secondary-rgb), .8); } }
+
+/* 말풍선 — 쓰레기통 발 아래 (머리 위에 두면 고리 칸을 가린다 — 규칙 23). 창 오른쪽 끝을 넘지 않게 오른쪽을 맞춘다 */
+.mago .bubble { position: absolute; right: 0; top: 126px; width: max-content; max-width: 230px; padding: 7px 12px; border-radius: 14px;
+  background: var(--light-card); color: var(--text-dark); box-shadow: 0 8px 22px rgba(20, 16, 40, .25); line-height: 1.35;
+  opacity: 0; transform: translateY(-6px) scale(.96); transform-origin: 70% 0; transition: opacity .2s ease-out, transform .2s ease-out; }
+.mago .bubble::before { content: ''; position: absolute; right: 78px; top: -5px; width: 12px; height: 12px; background: inherit; transform: rotate(45deg); }
+.mago .bubble.on { opacity: 1; transform: none; }
+.mago .bubble b { display: block; font-size: 13px; font-weight: 800; }
+.mago .bubble span { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.mago .bubble.bad b { color: var(--error); }
+
+/* 끌던 파일 → 음식 (qconv.js throwFood) */
+.food { position: absolute; width: 44px; height: auto; pointer-events: none; }
