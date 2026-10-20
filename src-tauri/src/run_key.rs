@@ -1,7 +1,7 @@
-//! 윈도우 켤 때 트레이에 같이 켜기 (컴뚝딱 startup/run_key.rs 에서 가져옴). `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 한 값만 쓴다.
+//! 윈도우 켤 때 트레이에 같이 켜기 (컴뚝딱 startup/run_key.rs 에서 가져옴 — 기본 켬은 lib.rs apply_autostart_default, 지우기 때 정리는 windows/hooks.nsh). `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 한 값만 쓴다.
 //!
 //! **HKCU 만 건드린다.** HKLM(모든 사용자)은 관리자 권한이 필요하고, 남의 계정까지 바꾸는 일이라 쓰지 않는다.
-//! 값 이름은 우리 것 하나(`컴뚝딱`)뿐이고, 지울 때도 그 이름만 지운다 — 다른 프로그램의 시작 등록은 읽지도 않는다.
+//! 값 이름은 우리 것 하나(`MAGO`)뿐이고, 지울 때도 그 이름만 지운다 — 다른 프로그램의 시작 등록은 읽지도 않는다.
 //!
 //! 값 내용: `"<exe 경로>" --tray`. 경로에 공백·한글이 있어도 되도록 큰따옴표로 감싼다.
 
@@ -34,7 +34,7 @@ pub fn get() -> Option<String> {
 }
 
 /// 등록됐는가 + 그 경로가 지금 exe 와 같은가.
-#[allow(dead_code)] // 컴뚝딱 화면용 (경로가 옛것인지까지 보기)
+#[allow(dead_code)] // 경로가 옛것인지까지 보는 화면이 생기면 쓴다
 pub fn status() -> (bool, bool) {
     let Some(v) = get() else { return (false, false) };
     let same = current_exe().map(|e| v == command_line(&e)).unwrap_or(false);
@@ -42,7 +42,7 @@ pub fn status() -> (bool, bool) {
 }
 
 pub fn enable() -> Result<String, String> {
-    let exe = current_exe().ok_or("컴뚝딱 실행 파일 경로를 찾지 못했습니다.")?;
+    let exe = current_exe().ok_or("MAGO 실행 파일 경로를 찾지 못했습니다.")?;
     let cmd = command_line(&exe);
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
         .create_subkey_with_flags(RUN_PATH, KEY_SET_VALUE)
@@ -71,21 +71,21 @@ mod tests {
     #[test]
     fn command_line_quotes_the_path() {
         // 한글·공백이 섞인 경로가 기본값인 PC 가 많다 (C:\Users\강경모\...)
-        let c = command_line(r"C:\Users\강경모\내 프로그램\컴뚝딱.exe");
-        assert_eq!(c, r#""C:\Users\강경모\내 프로그램\컴뚝딱.exe" --tray"#);
+        let c = command_line(r"C:\Users\강경모\내 프로그램\MAGO.exe");
+        assert_eq!(c, r#""C:\Users\강경모\내 프로그램\MAGO.exe" --tray"#);
         assert!(c.starts_with('"') && c.contains("\" --tray"));
     }
 
     /// 진짜 레지스트리 왕복. 우리 값 이름 대신 시험용 이름을 써서 사용자 설정을 건드리지 않는다.
     #[test]
     fn registry_round_trip_with_a_test_value_name() {
-        const TEST_NAME: &str = "KOMTEST_컴뚝딱_자동실행";
+        const TEST_NAME: &str = "MAGOTEST_자동실행";
         let root = RegKey::predef(HKEY_CURRENT_USER);
         let (key, _) = root.create_subkey_with_flags(RUN_PATH, KEY_SET_VALUE | KEY_READ).unwrap();
         let _ = key.delete_value(TEST_NAME);
         assert!(key.get_value::<String, _>(TEST_NAME).is_err(), "시작 전엔 없어야 한다");
 
-        let cmd = command_line(r"C:\tmp\komttukttak.exe");
+        let cmd = command_line(r"C:\tmp\mago.exe");
         key.set_value(TEST_NAME, &cmd).unwrap();
         assert_eq!(key.get_value::<String, _>(TEST_NAME).unwrap(), cmd);
 

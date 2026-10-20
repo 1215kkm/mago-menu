@@ -11,6 +11,7 @@
 //! 설정 창 X 는 끝내기가 아니라 숨기기다 (끝내기는 트레이 메뉴 [끝내기]).
 
 mod actions;
+mod anim;
 mod content;
 mod convert;
 mod outdir;
@@ -62,8 +63,39 @@ fn autostart_set(on: bool) -> Result<Autostart, String> {
     } else {
         run_key::disable()?;
     }
+    // 사용자가 직접 고른 것 — 다음에 켤 때 기본값으로 덮지 않는다
+    let _ = prefs::section_set(AUTOSTART_DEFAULTED, serde_json::Value::Bool(true));
     log(&format!("윈도우 켤 때 같이 켜기 = {on}"));
     Ok(Autostart { on: run_key::get().is_some() })
+}
+
+/// prefs 칸: 기본값(켬)을 이미 한 번 넣었거나 사용자가 직접 골랐다는 표시
+const AUTOSTART_DEFAULTED: &str = "autostartDefaulted";
+
+/// cargo 로 빌드한 시험용 exe 인가 (`...\target\release\mago.exe`) — 시험 실행이 대표님 PC 시작프로그램에 박히면 안 된다
+fn is_dev_build(exe: &str) -> bool {
+    let e = exe.to_lowercase().replace('/', "\\");
+    e.contains("\\target\\release\\") || e.contains("\\target\\debug\\")
+}
+
+/// 윈도우 켤 때 같이 켜기는 **기본 켬** (10-20 대표님) — 늘 켜져 있어야 쓸 수 있는 프로그램이라서.
+/// 한 번만 넣는다: 그 뒤 사용자가 끄면 끈 채로 둔다. 0.1.0 을 깐 사람도 0.1.1 로 바뀌며 한 번 켜진다.
+fn apply_autostart_default() {
+    if prefs::load().get(AUTOSTART_DEFAULTED).is_some() {
+        return;
+    }
+    let Some(exe) = run_key::current_exe() else { return };
+    if is_dev_build(&exe) {
+        log("시험용 exe 라 윈도우 켤 때 같이 켜기 기본값을 넣지 않음");
+        return;
+    }
+    match run_key::enable() {
+        Ok(_) => {
+            let _ = prefs::section_set(AUTOSTART_DEFAULTED, serde_json::Value::Bool(true));
+            log("윈도우 켤 때 같이 켜기 = true (기본값)");
+        }
+        Err(e) => log(&format!("윈도우 켤 때 같이 켜기 기본값 못 넣음: {e}")),
+    }
 }
 
 #[tauri::command]
@@ -82,6 +114,7 @@ pub fn run() {
     }
     // 처음 켜는 사람에게는 설정 창을 보여 준다 (트레이에만 숨어 있으면 켜졌는지 모른다)
     let first_run = prefs::path().map(|p| !p.exists()).unwrap_or(true);
+    apply_autostart_default();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -140,4 +173,17 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("MAGO 실행 실패");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 시험용 exe 는 대표님 PC 시작프로그램에 박히면 안 된다 — 설치된 exe 만 기본 켬
+    #[test]
+    fn only_installed_exes_get_the_autostart_default() {
+        assert!(is_dev_build(r"D:\shift-menu\src-tauri\target\release\mago.exe"));
+        assert!(is_dev_build("D:/shift-menu/src-tauri/Target/Debug/mago.exe"));
+        assert!(!is_dev_build(r"C:\Users\강경모\AppData\Local\MAGO\mago.exe"));
+    }
 }

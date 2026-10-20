@@ -56,6 +56,22 @@
 지금은 시트의 15자세를 겹쳐 넘기기(0.09초)로 잇는다. 아래를 같은 캐릭터·같은 크기(투명 PNG, 높이 240 안팎, 발 위치 같게)로 받으면 끊김이 줄어든다:
 `blink_1~2`(눈 깜빡) · `mouth_open_1~3`(idle → wait 사이) · `chew_1~4`(씹기 한 바퀴) · `drool_1~3`(침 방울) · `poop_1~4`(끙 → 응가) · `lid_open_1~3`(뚜껑 열림) · `fx_zzz`·`icon_plus`(배경 없는 것 — 지금은 CSS 로 그림) · `feed_near` 손 없는 판.
 
+## ✔ 0.1.1 에 넣음 (10-20) — 윈도우 켤 때 같이 켜기 **기본 켬** (남은 것 1~3 끝: 시험 추가 · `src-tauri/windows/hooks.nsh` 지우기 훅 · run_key 글)
+대표님: "윈도우 켤 때 같이 켜기 기본 켬으로 해줘".
+- 해 둔 것 (커밋 전): `src-tauri/src/lib.rs` 에 `apply_autostart_default()` — prefs `autostartDefaulted` 가 없으면 한 번 `run_key::enable()` 하고 표시. 사용자가 `autostart_set` 으로 고르면 표시를 남겨 다시 덮지 않음. cargo `target\release|debug` 의 시험용 exe 는 등록 안 함(`is_dev_build`). 0.1.0 사용자도 0.1.1 로 바뀌며 한 번 켜짐.
+- 남은 것:
+  1. `is_dev_build` 단위 시험 추가, `cargo test --lib` 통과 확인.
+  2. 지우기(언인스톨) 때 `HKCU\...\Run` 의 `MAGO` 값도 지우기 — NSIS 훅(`bundle.windows.nsis.installerHooks`, `NSIS_HOOK_POSTUNINSTALL` 에서 `DeleteRegValue`, 업데이트 중(`$UpdateMode = 1`)에는 지우지 않게).
+  3. `run_key.rs` 의 남은 '컴뚝딱' 글(주석·오류 문구 "컴뚝딱 실행 파일 경로…")을 MAGO 로.
+  4. README · 이 문서 정리, version 0.1.1 → 「배포」 순서대로 빌드·릴리스 → latest.json 확인.
+  5. 대표님께 한국어로 보고 (확인한 것 / 못 한 것).
+
+## ✔ 0.1.1 — 10-20 대표님 요청 3가지
+- **쓰레기통이 왼쪽(고리 쪽)을 본다** — 그림은 그대로, `styles/qconv.css` `.mago .pose` 에 `scaleX(-1)`. 음식이 날아가는 입 자리도 왼쪽으로 (`qconv.js` throwFood).
+- **먹은 용량** — 말풍선 "냠! 4개 · 12.5MB 먹었어요 / 지금까지 19개 · 45.1MB · 휴지통에 있어요". prefs `mago.files`·`mago.bytes` 로 쌓는다(`content.rs on_feed`). 설정 창 숨은 메뉴 카드에도.
+  "4개를 넣어도 1개" — 탐색기와 같은 셸 끌기 데이터 4개로 시험해 보니 놓기 창은 4개를 다 받는다(`a_shell_drag_of_four_files_hands_over_all_four`). 한 번에 하나씩 네 번 넣은 것일 수도 있어 쌓인 수를 같이 보인다. **대표님 PC 에서 4개 한꺼번에 먹여 확인 필요.**
+- **움직이는 GIF** (`src-tauri/src/anim.rs`) — GIF 칸을 기본으로 켬(설정 판 4, 옛 설정엔 한 번 더함). 여러 장 → 이름 순(숫자는 숫자로)으로 이어 하나 `첫이름_움직임.gif`. 한 장 → 칸 사이가 빈 줄(투명·바탕색)이거나 가로가 세로의 정확한 배수면 칸을 나눠 움직임, 아니면 예전처럼 보통 GIF. 긴 변 800px, 300장까지, 빠르기는 설정 「GIF 한 장」 0.06/0.1/0.2/0.5초.
+
 ## 다음에 할 일 (★ = 대표님 결정)
 1. ★ 숨은 메뉴 더 넣기 — 대표님 메모의 나머지(1분 탈출구 · 타임캡슐 · 파일 조합 해금 · 30초 미니게임 · 소리의 방 · 파일 감별사)를 어떤 순서로.
 2. ★ "응가 → 추가 메뉴" 의 추가 메뉴를 쪽지 말고 진짜 기능(예: 미니게임)으로 열지.

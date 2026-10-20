@@ -9,9 +9,11 @@ const T = window.__TAURI__;
 const invoke = (cmd, args) => T.core.invoke(cmd, args);
 
 const KEYS = [{ id: 'shift', label: 'Shift' }, { id: 'ctrl', label: 'Ctrl' }, { id: 'alt', label: 'Alt' }];
-const IMAGE = [{ id: 'png', label: 'PNG' }, { id: 'jpg', label: 'JPG' }, { id: 'webp', label: 'WEBP' }, { id: 'bmp', label: 'BMP' }, { id: 'gif', label: 'GIF' },
+const IMAGE = [{ id: 'png', label: 'PNG' }, { id: 'jpg', label: 'JPG' }, { id: 'webp', label: 'WEBP' }, { id: 'bmp', label: 'BMP' }, { id: 'gif', label: 'GIF (움직이는 그림)' },
   { id: 'square', label: '정사각 (SNS 1080)' }, { id: 'small', label: '1MB 이하' }];
 const AUDIO = [{ id: 'mp3', label: 'MP3' }, { id: 'wav', label: 'WAV' }];
+// 움직이는 GIF 한 장을 보여 주는 시간 (Rust anim::SPEEDS 와 같아야 한다)
+const GIF_SPEEDS = [{ id: 60, label: '빠르게 0.06초' }, { id: 100, label: '보통 0.1초' }, { id: 200, label: '느리게 0.2초' }, { id: 500, label: '아주 느리게 0.5초' }];
 const PDF = [{ id: 'jpg-pages', label: 'JPG 쪽마다' }, { id: 'jpg-one', label: 'JPG 한 장으로' }, { id: 'png-pages', label: 'PNG 쪽마다' }, { id: 'png-one', label: 'PNG 한 장으로' }];
 
 const S = { s: null, run: false, err: null, toast: null, m: null };
@@ -41,6 +43,13 @@ function chips(items, on, toggle) {
     const a = on.includes(it.id);
     return el('button', { type: 'button', class: `chip${a ? ' on' : ''}`, 'aria-pressed': a ? 'true' : 'false', onclick: () => toggle(it.id, !a) }, [a ? '✓ ' : '', it.label]);
   }));
+}
+
+/** 사람이 읽는 용량 — 340KB · 12.3MB · 1.2GB (qconv.js 와 같게) */
+function size(b) {
+  if (b < 1024 * 1024) return b ? `${Math.max(1, Math.round(b / 1024))}KB` : '0MB';
+  if (b < 1024 ** 3) return `${(b / 1024 / 1024).toFixed(b < 100 * 1024 * 1024 ? 1 : 0)}MB`;
+  return `${(b / 1024 ** 3).toFixed(1)}GB`;
 }
 
 const row = (label, node) => el('div', { class: 'row' }, [el('span', { class: 'lab' }, [label]), node]);
@@ -85,6 +94,7 @@ function render() {
     row('쓰기', seg([{ id: 'off', label: '끔' }, { id: 'on', label: '켬' }], s.enabled ? 'on' : 'off', (v) => set({ enabled: v === 'on' }, v === 'on' ? `켰어요 — 탐색기에서 ${keyName} 를 누른 채 파일을 끌어 보세요.` : '껐어요.'))),
     row('누를 키', seg(KEYS, s.key, (v) => set({ key: v }))),
     row('그림일 때', chips(IMAGE, s.image, toggle('image'))),
+    s.image.includes('gif') ? row('GIF 한 장', seg(GIF_SPEEDS, s.gifMs, (v) => set({ gifMs: v }))) : null,
     row('소리일 때', chips(AUDIO, s.audio, toggle('audio'))),
     row('PDF 일 때', chips(PDF, s.pdf, toggle('pdf'))),
     row('윈도우 켤 때', seg([{ id: 'off', label: '같이 안 켜기' }, { id: 'on', label: '트레이에 같이 켜기' }], S.run ? 'on' : 'off', async (v) => {
@@ -104,7 +114,7 @@ function render() {
   const m = S.m;
   const secret = m && el('section', { class: 'card' }, [
     el('h2', {}, ['숨은 메뉴']),
-    el('p', { class: 'muted' }, [`찾은 것 ${m.found.length} / ${m.total} · 쓰레기통에 먹인 횟수 ${m.feeds}번`]),
+    el('p', { class: 'muted' }, [`찾은 것 ${m.found.length} / ${m.total} · 쓰레기통이 먹은 파일 ${m.files || 0}개 · ${size(m.bytes || 0)} (${m.feeds}번)`]),
     m.found.length
       ? el('ul', { class: 'found' }, m.found.map((f) => el('li', {}, [
         el('span', {}, [f.name]),
@@ -123,6 +133,7 @@ function render() {
       el('li', {}, ['오른쪽 아래 ', el('b', {}, ['쓰레기통']), '에 놓으면 냠냠 먹고 윈도우 휴지통으로 보내요. 휴지통에서 되살릴 수 있어요.']),
       el('li', {}, ['그만두려면 가운데에 놓거나 Esc. 메뉴 밖 다른 폴더에 놓으면 윈도우가 평소처럼 옮겨요.']),
     ]),
+    el('p', { class: 'hint' }, ['GIF 칸: 여러 장을 같이 끌어 놓으면 이름 순서(1, 2, … 10)로 이어 움직이는 GIF 하나를 만들어요. 동작이 칸칸이 그려진 한 장을 놓으면 칸을 나눠 움직여요. 긴 변은 800px 까지 줄여요.']),
     el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로).']),
   ]);
 

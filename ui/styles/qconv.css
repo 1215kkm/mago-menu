@@ -41,7 +41,8 @@ body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 .mago .breath { position: absolute; inset: 0; transform-origin: 50% 100%; animation: breath 2.4s ease-in-out infinite;
   filter: drop-shadow(0 6px 8px rgba(20, 16, 40, .25)); }
 @keyframes breath { 0%, 100% { transform: scale(1, 1); } 50% { transform: scale(1.015, 1.035); } }
-.mago .pose { position: absolute; bottom: 0; left: 50%; height: 120px; width: auto; transform: translateX(-50%);
+/* 그림은 오른쪽을 보고 그려져 있다 — 쓰레기통이 고리 오른쪽 아래에 살아서 좌우를 뒤집어 고리(왼쪽)를 보게 한다 (10-20 CEO) */
+.mago .pose { position: absolute; bottom: 0; left: 50%; height: 120px; width: auto; transform: translateX(-50%) scaleX(-1);
   opacity: 0; transition: opacity .09s linear; }
 .mago .pose.on { opacity: 1; }
 /* 씹을 때마다 꾹 눌렸다 튀어 오른다 */
@@ -76,13 +77,13 @@ body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 @keyframes glow { 50% { box-shadow: 0 0 0 4px rgba(255, 255, 255, .8), 0 0 22px rgba(var(--secondary-rgb), .8); } }
 
 /* 말풍선 — 쓰레기통 발 아래 (머리 위에 두면 고리 칸을 가린다 — 규칙 23). 창 오른쪽 끝을 넘지 않게 오른쪽을 맞춘다 */
-.mago .bubble { position: absolute; right: 0; top: 126px; width: max-content; max-width: 230px; padding: 7px 12px; border-radius: 14px;
+.mago .bubble { position: absolute; right: 0; top: 126px; width: max-content; max-width: 270px; padding: 7px 12px; border-radius: 14px;
   background: var(--light-card); color: var(--text-dark); box-shadow: 0 8px 22px rgba(20, 16, 40, .25); line-height: 1.35;
   opacity: 0; transform: translateY(-6px) scale(.96); transform-origin: 70% 0; transition: opacity .2s ease-out, transform .2s ease-out; }
 .mago .bubble::before { content: ''; position: absolute; right: 78px; top: -5px; width: 12px; height: 12px; background: inherit; transform: rotate(45deg); }
 .mago .bubble.on { opacity: 1; transform: none; }
 .mago .bubble b { display: block; font-size: 13px; font-weight: 800; }
-.mago .bubble span { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.mago .bubble span { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; }
 .mago .bubble.bad b { color: var(--error); }
 
 /* 끌던 파일 → 음식 (qconv.js throwFood) */

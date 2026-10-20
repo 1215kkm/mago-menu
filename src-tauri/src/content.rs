@@ -58,7 +58,11 @@ pub struct Reward {
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Progress {
+    /// 먹인 횟수 (놓은 번수 — feedTotal 은 이것으로 센다)
     pub feeds: u32,
+    /// 먹인 파일 수 · 용량(바이트) 합 — 10-20 CEO "몇 메가를 먹었는지도 알 수 있게"
+    pub files: u64,
+    pub bytes: u64,
     pub discovered: Vec<String>,
 }
 
@@ -148,10 +152,12 @@ fn discover(p: &mut Progress, ok: impl Fn(&Unlock) -> bool) -> Option<Hidden> {
     Some(h)
 }
 
-/// 쓰레기통에 `batch` 개를 먹였다
-pub fn on_feed(batch: usize) -> (u32, Option<Hidden>) {
+/// 쓰레기통에 `batch` 개(`bytes` 바이트)를 먹였다. 돌려주는 값: 쌓인 기록 · 이번에 찾은 숨은 메뉴
+pub fn on_feed(batch: usize, bytes: u64) -> (Progress, Option<Hidden>) {
     let mut p = progress();
     p.feeds += 1;
+    p.files += batch as u64;
+    p.bytes += bytes;
     let feeds = p.feeds;
     let found = discover(&mut p, |u| match u {
         Unlock::FeedTotal { count } => feeds >= *count,
@@ -159,7 +165,7 @@ pub fn on_feed(batch: usize) -> (u32, Option<Hidden>) {
         _ => false,
     });
     save_progress(&p);
-    (feeds, found)
+    (p, found)
 }
 
 /// 메뉴가 열렸다 (시각 조건)
@@ -222,6 +228,8 @@ pub struct Found {
 #[serde(rename_all = "camelCase")]
 pub struct State {
     feeds: u32,
+    files: u64,
+    bytes: u64,
     left: u32,
     total: u32,
     version: u32,
@@ -234,7 +242,7 @@ pub fn mago_state() -> State {
     let p = progress();
     let (left, total) = left();
     let found = c.hidden.iter().filter(|h| p.discovered.contains(&h.id)).map(|h| Found { id: h.id.clone(), name: h.name.clone() }).collect();
-    State { feeds: p.feeds, left, total, version: c.version, found }
+    State { feeds: p.feeds, files: p.files, bytes: p.bytes, left, total, version: c.version, found }
 }
 
 /// 설정 창(content-sync.js)이 GitHub 에서 받은 content.json 을 넘긴다

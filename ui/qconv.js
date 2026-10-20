@@ -44,6 +44,13 @@ function sector(a0, a1, r0, r1) {
   const [x3, y3] = pt(r0, a0);
   return `M${x0} ${y0} A${r1} ${r1} 0 ${big} 1 ${x1} ${y1} L${x2} ${y2} A${r0} ${r0} 0 ${big} 0 ${x3} ${y3} Z`;
 }
+/** 사람이 읽는 용량 — 340KB · 12.3MB · 1.2GB */
+function size(b) {
+  if (b < 1024 * 1024) return `${Math.max(1, Math.round(b / 1024))}KB`;
+  if (b < 1024 ** 3) return `${(b / 1024 / 1024).toFixed(b < 100 * 1024 * 1024 ? 1 : 0)}MB`;
+  return `${(b / 1024 ** 3).toFixed(1)}GB`;
+}
+
 function text(x, y, cls, s) {
   const t = svg('text', { x, y, class: cls, 'text-anchor': 'middle', 'dominant-baseline': 'middle' });
   t.textContent = s;
@@ -116,6 +123,7 @@ function drawHub(segs) {
       add(text(C, C + 13, 'ht small', `${done.made}개 만듦`));
       if (done.failed) add(text(C, C + 27, 'hn', `${done.failed}개 실패`));
       else if (done.movedTo) add(text(C, C + 27, 'hn', '다른 폴더에 저장'));
+      else if (done.note) add(text(C, C + 27, 'hn', done.note));
     } else {
       // 가운데 원 안에 들어가게 9자씩 세 줄까지
       const msg = String(done.firstError || '바꾸지 못했어요');
@@ -139,7 +147,7 @@ function drawHub(segs) {
   } else {
     const hov = v.hover != null && segs[v.hover];
     const title = v.trash ? '쓰레기통' : hov ? hov.label : v.plan.title || '';
-    const note = v.trash ? '놓으면 휴지통으로' : hov ? '놓으면 바꿔요' : v.plan.note || '';
+    const note = v.trash ? '놓으면 휴지통으로' : hov ? hov.hint || '놓으면 바꿔요' : v.plan.note || '';
     add(text(C, C - 14, 'ht', title.length > 9 ? title.slice(0, 8) + '…' : title));
     // 가운데 원(지름 100px) 안에 들어가게 9자 안팎에서 줄을 바꾼다 — 띄어쓰기에서 끊는다
     wrap(note, 9, 2).forEach((l, k) => add(text(C, C + 3 + k * 12, 'hn', l)));
@@ -287,7 +295,8 @@ function throwFood(n) {
   const stage = root.firstChild;
   if (!stage) return;
   const from = cur ? [C + cur[0], C + cur[1]] : [TRASH.x - 40, TRASH.y - 60];
-  const mouth = [TRASH.x + 2, TRASH.y - 16];
+  // 캐릭터가 왼쪽(고리 쪽)을 보고 있어 입이 가운데보다 조금 왼쪽
+  const mouth = [TRASH.x - 6, TRASH.y - 16];
   for (let k = 0; k < Math.min(n, 4); k++) {
     const f = h('img', 'food');
     f.src = src(FOODS[(Math.random() * FOODS.length) | 0]);
@@ -345,8 +354,9 @@ function afterEat(r) {
     if (!r.found) {
       setPose('satisfied');
       burst('fx_hearts');
-      trashMsg = { title: '먹었어요', note: `${r.count}개 휴지통으로` };
-      say(`냠! ${r.count}개 먹었어요`, '휴지통에서 되살릴 수 있어요');
+      // 10-20 CEO "몇 메가를 먹었는지도 알 수 있게" — 이번에 먹은 것 + 지금까지 쌓인 것
+      trashMsg = { title: '먹었어요', note: `${r.count}개 ${size(r.bytes)}` };
+      say(`냠! ${r.count}개 · ${size(r.bytes)} 먹었어요`, `지금까지 ${r.filesTotal}개 · ${size(r.bytesTotal)} · 휴지통에 있어요`);
       render();
       return;
     }

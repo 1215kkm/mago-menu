@@ -64,14 +64,16 @@ pub struct Settings {
     pub pdf: Vec<String>,
     pub quality: u8,
     pub dpi: u32,
-    /// 설정 모양 판. 0 = v0.3.45 (기본 Shift · 꺼짐) · 1 = v0.3.46 (기본 Ctrl) · 2 = v0.3.47 (Shift) · 3 = 지금 (기본 켜짐).
+    /// 움직이는 GIF 한 장을 보여 주는 시간 (ms) — anim::SPEEDS 중 하나
+    pub gif_ms: u32,
+    /// 설정 모양 판. 0 = v0.3.45 (기본 Shift · 꺼짐) · 1 = v0.3.46 (기본 Ctrl) · 2 = v0.3.47 (Shift) · 3 = MAGO 0.1.0 (기본 켜짐) · 4 = 지금 (GIF 칸 기본).
     /// 칸이 없으면 0 으로 읽는다 — 구조체 전체 기본값(지금 판)을 쓰면 옛 설정을 알아볼 수 없다
     #[serde(default)]
     pub ver: u32,
 }
 
 /// 지금 설정 판
-const SETTINGS_VER: u32 = 3;
+const SETTINGS_VER: u32 = 4;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -79,12 +81,13 @@ impl Default for Settings {
             // 컴뚝딱이 켜져 있으면 늘 되는 기능 (머리말). 끄는 건 '파일 형식 바꾸기' 화면에서
             enabled: true,
             key: "shift".into(),
-            // BMP·GIF 는 설정에서 켤 수 있다 — 기본 고리는 자주 쓰는 다섯 칸
-            image: ["png", "jpg", "webp", "square", "small"].iter().map(|s| s.to_string()).collect(),
+            // BMP 는 설정에서 켤 수 있다. GIF 는 움직이는 그림을 만드는 칸이라 기본으로 (10-20 CEO "GIF 로 변환도 가능하게")
+            image: ["png", "jpg", "webp", "gif", "square", "small"].iter().map(|s| s.to_string()).collect(),
             audio: AUDIO_OPTS.iter().map(|s| s.to_string()).collect(),
             pdf: vec!["jpg-pages".into(), "jpg-one".into(), "png-pages".into()],
             quality: 92,
             dpi: 150,
+            gif_ms: crate::anim::DEFAULT_MS,
             ver: SETTINGS_VER,
         }
     }
@@ -94,6 +97,10 @@ impl Settings {
     /// 모르는 값은 버리고 순서는 정해 둔 순서로 — 화면이 무엇을 보내도 고리가 깨지지 않게
     fn clean(mut self) -> Self {
         let keep = |v: &[String], opts: &[&str]| opts.iter().filter(|o| v.iter().any(|x| x == *o)).map(|s| s.to_string()).collect::<Vec<_>>();
+        // 0.1.0 까지는 GIF 칸이 기본으로 꺼져 있었다 — 그때 저장된 목록에 한 번 더한다 (지금 판에서 끈 사람은 그대로)
+        if self.ver < 4 && !self.image.iter().any(|x| x == "gif") {
+            self.image.push("gif".into());
+        }
         self.image = keep(&self.image, IMAGE_OPTS);
         self.audio = keep(&self.audio, AUDIO_OPTS);
         self.pdf = keep(&self.pdf, PDF_OPTS);
@@ -112,6 +119,9 @@ impl Settings {
         }
         self.quality = self.quality.clamp(50, 100);
         self.dpi = if self.dpi >= 300 { 300 } else { 150 };
+        if !crate::anim::SPEEDS.contains(&self.gif_ms) {
+            self.gif_ms = crate::anim::DEFAULT_MS;
+        }
         self
     }
 }
@@ -147,6 +157,8 @@ pub struct Seg {
     pub id: String,
     pub label: String,
     pub sub: String,
+    /// 마우스가 올라갔을 때 가운데에 쓸 말 (비면 "놓으면 바꿔요")
+    pub hint: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -184,7 +196,7 @@ fn seg_of(id: &str) -> Seg {
         "jpg" => ("JPG", "가장 흔함"),
         "webp" => ("WEBP", "작은 용량"),
         "bmp" => ("BMP", "압축 없음"),
-        "gif" => ("GIF", "256색"),
+        "gif" => ("GIF", "움직이는 그림"),
         "square" => ("정사각", "SNS 1080"),
         "small" => ("1MB", "카톡·메일"),
         "mp3" => ("MP3", "192kbps"),
@@ -195,7 +207,19 @@ fn seg_of(id: &str) -> Seg {
         "png-one" => ("PNG", "한 장으로"),
         _ => (id, ""),
     };
-    Seg { id: id.into(), label: label.into(), sub: sub.into() }
+    Seg { id: id.into(), label: label.into(), sub: sub.into(), hint: String::new() }
+}
+
+/// GIF 칸 — 여러 장이면 이어 움직이고, 한 장이면 동작 칸이 나뉜 그림일 때 움직인다 (anim.rs)
+fn gif_seg(n: usize) -> Seg {
+    let mut g = seg_of("gif");
+    if n > 1 {
+        g.sub = format!("{n}장 이어서");
+        g.hint = format!("{n}장을 이어 움직여요");
+    } else {
+        g.hint = "동작 칸이 있으면 움직여요".into();
+    }
+    g
 }
 
 pub fn plan(paths: &[String], s: &Settings) -> Plan {
@@ -221,7 +245,7 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
         _ => s.pdf.clone(),
     };
     let note = if ids.is_empty() { "설정에서 보일 형식을 골라 주세요".into() } else { "가운데에 놓으면 취소".into() };
-    Plan { kind: kind.into(), title, note, segs: ids.iter().map(|i| seg_of(i)).collect() }
+    Plan { kind: kind.into(), title, note, segs: ids.iter().map(|i| if i == "gif" { gif_seg(n) } else { seg_of(i) }).collect() }
 }
 
 /// 고리 가운데에서 (dx, dy) 논리 px 떨어진 곳이 몇 번째 칸인가. 칸은 12시 방향에서 시계 방향으로.
@@ -495,6 +519,8 @@ struct Done {
     first_error: String,
     /// 원본 폴더에 못 써서 다른 곳에 둔 경우 그 폴더
     moved_to: String,
+    /// 결과 한 줄 — "12장 움직이는 GIF"
+    note: String,
 }
 
 fn run(paths: Vec<String>, target: String) {
@@ -540,6 +566,36 @@ fn run(paths: Vec<String>, target: String) {
             base += n;
             continue;
         }
+        // 움직이는 GIF — 여러 장이면 이어서 하나, 한 장이면 동작 칸을 나눠서. 나눌 칸이 없는 한 장만 아래 보통 GIF 로
+        if target == "gif" {
+            let made = if n > 1 {
+                crate::anim::from_files(&files, &dir, s.gif_ms, &mut |i, _| {
+                    emit("qconv:progress", Prog { done: base, total, frac: (base as f64 + i as f64 / n as f64) / total.max(1) as f64 });
+                })
+                .map(Some)
+            } else {
+                emit("qconv:progress", Prog { done: base, total, frac: base as f64 / total.max(1) as f64 });
+                crate::anim::from_sheet(Path::new(&files[0]), &dir, s.gif_ms)
+            };
+            match made {
+                Ok(Some(m)) => {
+                    crate::log(&format!("[MAGO] 움직이는 GIF {}장 · {}KB → {}", m.frames, m.out.bytes / 1024, m.out.file));
+                    out.made += 1;
+                    out.note = format!("{}장 움직이는 GIF", m.frames);
+                    base += n;
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    out.failed += n;
+                    if out.first_error.is_empty() {
+                        out.first_error = e;
+                    }
+                    base += n;
+                    continue;
+                }
+            }
+        }
         let req = request(&target, files, &dir, &s);
         let mut tick = move |i: usize, _t: usize, cur: &str| {
             // PDF 는 "파일 · 3/40쪽" 으로 온다
@@ -580,10 +636,13 @@ fn run(paths: Vec<String>, target: String) {
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct Ate {
-    /// 휴지통으로 간 수
+    /// 휴지통으로 간 수 · 그 용량(바이트)
     count: usize,
-    /// 지금까지 먹인 횟수
+    bytes: u64,
+    /// 지금까지 먹인 횟수 · 파일 수 · 용량
     feeds: u32,
+    files_total: u64,
+    bytes_total: u64,
     /// 이번에 찾은 숨은 메뉴 이름
     found: Option<String>,
     error: String,
@@ -595,15 +654,22 @@ struct Ate {
 fn feed(paths: Vec<String>) {
     crate::log(&format!("[MAGO] 쓰레기통 {}개", paths.len()));
     let mut a = Ate::default();
+    // 크기는 보내기 전에 잰다 — 휴지통으로 간 뒤에는 그 자리에 없다
+    let sizes: Vec<(String, u64)> = paths.iter().filter_map(|p| Some((p.clone(), std::fs::metadata(p).ok()?.len()))).collect();
     #[cfg(windows)]
     let gone = crate::actions::recycle(&paths);
     #[cfg(not(windows))]
     let gone: Result<usize, String> = Err("윈도우에서만 돼요".into());
     match gone {
         Ok(k) => {
-            let (feeds, found) = crate::content::on_feed(k);
+            // 실제로 사라진 것만 센다 (휴지통이 일부를 못 받았을 수 있다)
+            let bytes = sizes.iter().filter(|(p, _)| !Path::new(p).exists()).map(|(_, b)| b).sum();
+            let (p, found) = crate::content::on_feed(k, bytes);
             a.count = k;
-            a.feeds = feeds;
+            a.bytes = bytes;
+            a.feeds = p.feeds;
+            a.files_total = p.files;
+            a.bytes_total = p.bytes;
             if let Some(h) = found {
                 a.found = Some(h.name.clone());
                 ring(|r| r.secret = Some(h.id));
@@ -612,7 +678,7 @@ fn feed(paths: Vec<String>) {
         Err(e) => a.error = e,
     }
     (a.left, a.total) = crate::content::left();
-    crate::log(&format!("[MAGO] 먹음 {} · 누적 {} · 찾음 {:?} {}", a.count, a.feeds, a.found, a.error));
+    crate::log(&format!("[MAGO] 먹음 {}개 {}B · 누적 {}번 {}개 {}B · 찾음 {:?} {}", a.count, a.bytes, a.feeds, a.files_total, a.bytes_total, a.found, a.error));
     // 씹는 모습(약 2초)을 보여 주고 닫는다. 숨은 메뉴를 찾았으면 배부름 → 응가 → 메뉴까지 (약 5초)
     let wait = if a.found.is_some() { 5600 } else if a.error.is_empty() { 2600 } else { 3200 };
     ring(|r| {
@@ -816,6 +882,33 @@ mod drop_win {
             out
         }
 
+        /// 10-20 CEO "쓰레기통에 4개를 넣어도 1개 먹었다고 나와" — 탐색기에서 네 개를 같이 끌면 네 개 다 받는지
+        #[test]
+        fn a_shell_drag_of_four_files_hands_over_all_four() {
+            unsafe {
+                let _ = OleInitialize(None);
+                *SETTINGS.lock().unwrap() = Some(Settings::default());
+                let d = std::env::temp_dir().join(format!("mago-q4-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&d);
+                std::fs::create_dir_all(&d).unwrap();
+                let mut items = Vec::new();
+                for i in 1..=4 {
+                    let f = d.join(format!("동작{i}.png"));
+                    crate::convert::convert::save(&image::RgbaImage::from_pixel(6, 6, image::Rgba([9, 9, 9, 255])), &f, crate::convert::convert::OutFormat::Png, 90, [255; 4]).unwrap();
+                    items.push(pidl(&f));
+                }
+                let folder = pidl(&d);
+                let kids: Vec<*const ITEMIDLIST> = items.iter().map(|p| ILFindLastID(*p) as *const ITEMIDLIST).collect();
+                let data: IDataObject = SHCreateDataObject(Some(folder as *const _), Some(&kids), None::<&IDataObject>).expect("셸 끌기 데이터");
+                let some = Some(data);
+                assert_eq!(paths_of(Ref::from(&some)).len(), 4, "놓기 창이 네 개를 다 받아야 한다");
+                for p in items {
+                    ILFree(Some(p));
+                }
+                ILFree(Some(folder));
+            }
+        }
+
         #[test]
         fn a_shell_drop_on_a_segment_is_a_copy_and_converts_next_to_the_original() {
             unsafe {
@@ -839,7 +932,7 @@ mod drop_win {
                 target.DragEnter(&data, MODIFIERKEYS_FLAGS(0), POINTL { x: 1100, y: 1010 }, &mut eff).unwrap();
                 assert_eq!(eff, DROPEFFECT_COPY, "끄는 동안에도 복사로 답해야 한다");
                 let segs: Vec<String> = ring(|r| r.plan.segs.iter().map(|g| g.id.clone()).collect());
-                assert_eq!(segs, ["jpg", "webp", "square", "small"], "PNG 를 끌면 PNG 칸은 없다");
+                assert_eq!(segs, ["jpg", "webp", "gif", "square", "small"], "PNG 를 끌면 PNG 칸은 없다");
                 assert_eq!(ring(|r| r.hover), Some(1), "오른쪽 조금 아래는 두 번째 칸(WEBP)");
 
                 // 가운데에 놓으면 아무 일도 없다
@@ -1186,7 +1279,11 @@ mod tests {
         assert_eq!(p.kind, "image");
         assert_eq!(p.title, "JPG 2개");
         assert!(!p.segs.iter().any(|g| g.id == "jpg"), "전부 JPG 면 JPG 칸은 없다");
-        assert_eq!(p.segs.len(), 4);
+        assert_eq!(p.segs.len(), 5);
+        let gif = p.segs.iter().find(|g| g.id == "gif").expect("GIF 칸은 기본으로 있다");
+        assert_eq!((gif.sub.as_str(), gif.hint.as_str()), ("2장 이어서", "2장을 이어 움직여요"), "여러 장이면 이어 움직인다고 알려 준다");
+        let one = plan(&["걷기.png".into()], &s);
+        assert_eq!(one.segs.iter().find(|g| g.id == "gif").unwrap().sub, "움직이는 그림");
 
         let p = plan(&["x.pdf".into()], &s);
         assert_eq!(p.segs.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["jpg-pages", "jpg-one", "png-pages"]);
@@ -1228,6 +1325,17 @@ mod tests {
             assert_eq!((s.key.as_str(), s.ver, s.enabled), (want, SETTINGS_VER, true), "{saved}");
         }
         assert_eq!(Settings::default().key, "shift");
+    }
+
+    /// 10-20 CEO "GIF 로 변환도 가능하게" — 0.1.0 때 저장된 목록에는 GIF 칸을 한 번 더하고, 그 뒤에 끈 사람은 그대로
+    #[test]
+    fn the_gif_cell_is_added_once_for_old_settings() {
+        let old: Settings = serde_json::from_value(serde_json::json!({ "image": ["png", "jpg", "webp", "square", "small"], "ver": 3 })).unwrap();
+        assert_eq!(old.clean().image, ["png", "jpg", "webp", "gif", "square", "small"]);
+        let off: Settings = serde_json::from_value(serde_json::json!({ "image": ["png", "jpg"], "ver": 4 })).unwrap();
+        assert_eq!(off.clean().image, ["png", "jpg"], "지금 판에서 끈 GIF 는 다시 켜지 않는다");
+        let odd: Settings = serde_json::from_value(serde_json::json!({ "gifMs": 7, "ver": 4 })).unwrap();
+        assert_eq!(odd.clean().gif_ms, crate::anim::DEFAULT_MS, "모르는 빠르기는 보통으로");
     }
 
     /// 10-19 CEO "컴뚝딱이 켜져 있으면 윈도우 폴더에서 사용되는 기능" — 기본 켜짐. 옛 판의 꺼짐(기본값)은 한 번 켜고, 지금 판에서 끈 것은 그대로
