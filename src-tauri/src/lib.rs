@@ -14,11 +14,14 @@ mod actions;
 mod anim;
 mod content;
 mod convert;
+mod cutout;
 mod outdir;
+mod pdfprint;
 mod prefs;
 mod ring;
 mod run_key;
 mod single;
+mod text;
 mod updater;
 
 use std::io::Write;
@@ -88,6 +91,29 @@ fn autostart_set(on: bool) -> Result<Autostart, String> {
 const AUTOSTART_DEFAULTED: &str = "autostartDefaulted";
 
 /// cargo 로 빌드한 시험용 exe 인가 (`...\target\release\mago.exe`) — 시험 실행이 대표님 PC 시작프로그램에 박히면 안 된다
+/// 시험용 exe 만: `mago.exe --시험바꾸기 <칸> <파일>` — 끌기 없이 그 칸 일을 한 번 하고 로그에 남긴 뒤 끝난다.
+/// 마우스를 움직이지 않고 PDF(숨은 화면 창)·누끼까지 실제 프로그램 안에서 확인하려고 둔다. 설치한 exe 는 무시한다.
+const TRY_ARG: &str = "--시험바꾸기";
+
+fn try_one(app: tauri::AppHandle, target: String, file: String) {
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    if !is_dev_build(&exe) {
+        log("[시험] 설치한 exe 라 --시험바꾸기 를 무시함");
+        return;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let src = std::path::PathBuf::from(&file);
+        let dir = src.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+        let t = std::time::Instant::now();
+        match ring::one(&target, &src, &dir, &mut |_| {}) {
+            Ok(o) => log(&format!("[시험] {target} 됨 {}ms → {} ({}B)", t.elapsed().as_millis(), o.file, o.bytes)),
+            Err(e) => log(&format!("[시험] {target} 실패 — {e}")),
+        }
+        app.exit(0);
+    });
+}
+
 fn is_dev_build(exe: &str) -> bool {
     let e = exe.to_lowercase().replace('/', "\\");
     e.contains("\\target\\release\\") || e.contains("\\target\\debug\\")
@@ -172,7 +198,9 @@ pub fn run() {
                 .build(app)?;
             ring::start(app.handle().clone());
             updater::spawn(app.handle().clone());
-            if first_run || !tray_only {
+            if let Some(i) = args.iter().position(|a| a == TRY_ARG) {
+                try_one(app.handle().clone(), args.get(i + 1).cloned().unwrap_or_default(), args.get(i + 2).cloned().unwrap_or_default());
+            } else if first_run || !tray_only {
                 show_settings(app.handle());
             }
             Ok(())

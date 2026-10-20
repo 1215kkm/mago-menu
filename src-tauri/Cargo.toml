@@ -1,6 +1,6 @@
 [package]
 name = "mago"
-version = "0.1.3"
+version = "0.1.4"
 description = "MAGO — 탐색기에서 Shift 를 누른 채 파일을 끌면 뜨는 원형 메뉴와 쓰레기통"
 authors = ["1215kkm"]
 edition = "2021"
@@ -41,6 +41,8 @@ windows = { version = "0.61", features = [
   "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi",
   # 위 놓기 창 테스트가 탐색기와 같은 셸 끌기 데이터(SHCreateDataObject)를 만들 때 쓰는 항목 목록 형식
   "Win32_UI_Shell_Common",
+  # 10-20 누끼 (cutout.rs) — 윈도우에 들어 있는 기계 학습 엔진(Windows ML)으로 이 PC 에서 배경 지우기
+  "AI_MachineLearning", "Foundation_Collections",
 ] }
 # 놓기 창의 IDropTarget 을 만드는 #[implement] 매크로가 `windows_core` 이름으로 찾는다 (wry 와 같은 0.61 — 새로 받는 것 없음)
 windows-core = "0.61"
@@ -61,7 +63,16 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_SystemInformation",
   # 10-01 구글 드라이브 — 로그인 유지 열쇠를 이 Windows 계정만 풀 수 있게 암호화(DPAPI CryptProtectData) + PKCE 난수(BCryptGenRandom).
   "Win32_Security_Cryptography",
+  # 10-20 누끼 도구 처음 받기 (cutout.rs) — 윈도우 프록시 설정을 따르는 WinHTTP. 받은 파일은 위 BCrypt SHA-256 으로 확인
+  "Win32_Networking_WinHttp",
 ] }
+# 10-20 글(TXT) → Word · 한글(HWPX) · 엑셀 (text.rs) — 셋 다 zip 묶음. 업데이터가 이미 쓰는 zip 과 zlib-rs 라 새로 받는 것 없음
+zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# 메모장 'ANSI'(CP949)로 저장한 TXT 읽기 — tauri 가 이미 쓰는 것
+encoding_rs = "0.8"
+# 글 → PDF (pdfprint.rs) — 화면 엔진(WebView2)의 'PDF 로 인쇄'. tauri(wry) 와 같은 판
+webview2-com = "0.39"
+windows-core-62 = { package = "windows-core", version = "0.62" }
 
 [profile.release]
 lto = true

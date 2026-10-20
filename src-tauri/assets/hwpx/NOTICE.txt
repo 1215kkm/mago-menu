@@ -1,0 +1,1 @@
+이 폴더의 HWPX 빈 문서 틀은 python-hwpx 6.8.0 (https://github.com/airmang/python-hwpx, Apache-2.0) 의 hwpx/data/Skeleton.hwpx 에서 꺼냈다. content.hpf 의 작성자만 MAGO 로 바꿨다. MAGO text.rs 가 section0.xml 의 빈 문단 자리에 글을 넣어 .hwpx 를 만든다.

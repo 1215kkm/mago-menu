@@ -18,6 +18,7 @@ let v = { shown: false, busy: false, preview: false, plan: { kind: 'wait', title
 let prog = null; // { done, total, frac }
 let done = null; // { made, failed, firstError, movedTo }
 let trashMsg = null; // 쓰레기통이 일할 때 가운데 글 { title, note }
+let tipOn = null; // 말풍선에 설명을 띄운 칸 번호
 
 function svg(tag, attrs, kids) {
   const n = document.createElementNS(NS, tag);
@@ -191,6 +192,14 @@ function render() {
   }
   lastOn = on;
   drawHub(segs);
+  // 칸 설명 — 마우스가 올라간 칸에 긴 설명(tip)이 있으면 캐릭터 말풍선으로 (먹는 중 · 바꾸는 중엔 안 띄운다)
+  const tipSeg = !act && !done && !prog && !v.busy && on != null ? segs[on] : null;
+  if (tipSeg && tipSeg.tip) {
+    if (tipOn !== on) { say(tipSeg.label, tipSeg.tip, false, true); tipOn = on; }
+  } else if (tipOn != null) {
+    tipOn = null;
+    if (!act) hush();
+  }
 }
 
 // ── 쓰레기통 캐릭터 ─────────────────────────────────────────────────────────
@@ -256,9 +265,10 @@ function setPose(name) {
   mago.el.classList.toggle('opened', name === 'menu_open');
 }
 
-function say(msg, sub, bad) {
+function say(msg, sub, bad, tip) {
   mago.bubble.replaceChildren(h('b', '', [msg]), sub ? h('span', '', [sub]) : null);
   mago.bubble.classList.toggle('bad', Boolean(bad));
+  mago.bubble.classList.toggle('tip', Boolean(tip));
   mago.bubble.classList.add('on');
 }
 const hush = () => mago.bubble.classList.remove('on');
@@ -277,6 +287,7 @@ function resetMago() {
   trashMsg = null;
   cur = null;
   hush();
+  tipOn = null;
   mago.fx.replaceChildren();
   mago.squash.classList.remove('chomp', 'shake');
   mago.tilt.style.transform = '';

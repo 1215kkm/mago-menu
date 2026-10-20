@@ -85,6 +85,10 @@ body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 .mago .bubble b { display: block; font-size: 13px; font-weight: 800; }
 .mago .bubble span { display: block; font-size: 11px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; }
 .mago .bubble.bad b { color: var(--error); }
+/* 칸 설명 (GIF · 누끼 · 엑셀 …) — 긴 글이라 캐릭터 왼쪽, 고리 아래 빈자리에. 꼬리는 캐릭터 쪽(오른쪽) */
+.mago .bubble.tip { right: auto; left: -298px; top: 86px; width: 286px; max-width: none; transform-origin: 100% 30%; }
+.mago .bubble.tip::before { right: -5px; top: 18px; }
+.mago .bubble.tip span { white-space: normal; word-break: keep-all; font-size: 12px; color: var(--text-dark); margin-top: 3px; }
 
 /* 끌던 파일 → 음식 (qconv.js throwFood) */
 .food { position: absolute; width: 44px; height: auto; pointer-events: none; }

@@ -47,8 +47,10 @@ pub const EAT_R: f64 = 66.0;
 const PREFS_KEY: &str = "quickConvert";
 
 /// square = SNS 정사각 1080 · small = 1MB 이하 JPG (actions.rs)
-pub const IMAGE_OPTS: &[&str] = &["png", "jpg", "webp", "bmp", "gif", "square", "small"];
+pub const IMAGE_OPTS: &[&str] = &["png", "jpg", "webp", "bmp", "gif", "square", "small", "cutout"];
 pub const AUDIO_OPTS: &[&str] = &["mp3", "wav"];
+/// 글(TXT) — text.rs
+pub const TEXT_OPTS: &[&str] = &["pdf", "hwp", "word", "excel"];
 pub const PDF_OPTS: &[&str] = &["jpg-pages", "jpg-one", "png-pages", "png-one"];
 /// 고를 수 있는 캐릭터 (ui/qconv.js · settings.js 의 CHARS 와 같아야 한다)
 pub const CHARACTERS: &[&str] = &["cat", "trash"];
@@ -64,20 +66,22 @@ pub struct Settings {
     pub image: Vec<String>,
     pub audio: Vec<String>,
     pub pdf: Vec<String>,
+    /// 글(TXT)일 때 보일 칸 — TEXT_OPTS 중
+    pub text: Vec<String>,
     pub quality: u8,
     pub dpi: u32,
     /// 움직이는 GIF 한 장을 보여 주는 시간 (ms) — anim::SPEEDS 중 하나
     pub gif_ms: u32,
     /// 고리 옆 캐릭터 — CHARACTERS 중 하나 (그림은 ui/mago/<이름>/, 쓰레기통은 ui/mago/)
     pub character: String,
-    /// 설정 모양 판. 0 = v0.3.45 (기본 Shift · 꺼짐) · 1 = v0.3.46 (기본 Ctrl) · 2 = v0.3.47 (Shift) · 3 = MAGO 0.1.0 (기본 켜짐) · 4 = 지금 (GIF 칸 기본).
+    /// 설정 모양 판. 0 = v0.3.45 (기본 Shift · 꺼짐) · 1 = v0.3.46 (기본 Ctrl) · 2 = v0.3.47 (Shift) · 3 = MAGO 0.1.0 (기본 켜짐) · 4 = 0.1.1 (GIF 칸 기본) · 5 = 지금 (누끼 칸 기본).
     /// 칸이 없으면 0 으로 읽는다 — 구조체 전체 기본값(지금 판)을 쓰면 옛 설정을 알아볼 수 없다
     #[serde(default)]
     pub ver: u32,
 }
 
 /// 지금 설정 판
-const SETTINGS_VER: u32 = 4;
+const SETTINGS_VER: u32 = 5;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -86,9 +90,11 @@ impl Default for Settings {
             enabled: true,
             key: "shift".into(),
             // BMP 는 설정에서 켤 수 있다. GIF 는 움직이는 그림을 만드는 칸이라 기본으로 (10-20 CEO "GIF 로 변환도 가능하게")
-            image: ["png", "jpg", "webp", "gif", "square", "small"].iter().map(|s| s.to_string()).collect(),
+            // 누끼도 기본 (10-20 CEO "이미지선택했을때 누끼버튼")
+            image: ["png", "jpg", "webp", "gif", "square", "small", "cutout"].iter().map(|s| s.to_string()).collect(),
             audio: AUDIO_OPTS.iter().map(|s| s.to_string()).collect(),
             pdf: vec!["jpg-pages".into(), "jpg-one".into(), "png-pages".into()],
+            text: TEXT_OPTS.iter().map(|s| s.to_string()).collect(),
             quality: 92,
             dpi: 150,
             gif_ms: crate::anim::DEFAULT_MS,
@@ -107,7 +113,12 @@ impl Settings {
         if self.ver < 4 && !self.image.iter().any(|x| x == "gif") {
             self.image.push("gif".into());
         }
+        // 0.1.3 까지는 누끼 칸이 없었다 — 그때 저장된 목록에 한 번 더한다
+        if self.ver < 5 && !self.image.iter().any(|x| x == "cutout") {
+            self.image.push("cutout".into());
+        }
         self.image = keep(&self.image, IMAGE_OPTS);
+        self.text = keep(&self.text, TEXT_OPTS);
         self.audio = keep(&self.audio, AUDIO_OPTS);
         self.pdf = keep(&self.pdf, PDF_OPTS);
         // 0.3.45(Shift)·0.3.46(Ctrl) 때 저장된 키는 그때의 기본값이다 — 한 번만 지금 기본(Shift)으로 맞춘다.
@@ -168,6 +179,8 @@ pub struct Seg {
     pub sub: String,
     /// 마우스가 올라갔을 때 가운데에 쓸 말 (비면 "놓으면 바꿔요")
     pub hint: String,
+    /// 마우스가 올라갔을 때 캐릭터 말풍선에 띄울 긴 설명 (비면 안 띄운다)
+    pub tip: String,
 }
 
 #[derive(Serialize, Clone, Debug, Default)]
@@ -194,6 +207,8 @@ fn kind_of(e: &str) -> &'static str {
         "audio"
     } else if e == "pdf" {
         "pdf"
+    } else if crate::text::TEXT_EXT.contains(&e) {
+        "text"
     } else {
         "none"
     }
@@ -214,9 +229,21 @@ fn seg_of(id: &str) -> Seg {
         "jpg-one" => ("JPG", "한 장으로"),
         "png-pages" => ("PNG", "쪽마다"),
         "png-one" => ("PNG", "한 장으로"),
+        "cutout" => ("누끼", "배경 지우기"),
+        "pdf" => ("PDF", "인쇄용"),
+        "hwp" => ("한글", "HWPX"),
+        "word" => ("Word", "DOCX"),
+        "excel" => ("엑셀", "탭마다 칸"),
         _ => (id, ""),
     };
-    Seg { id: id.into(), label: label.into(), sub: sub.into(), hint: String::new() }
+    let (hint, tip) = match id {
+        "cutout" if crate::cutout::ready() => ("투명 PNG 로", "배경을 지운 투명 PNG 를 만들어요. 사진은 PC 밖으로 나가지 않아요.".to_string()),
+        "cutout" => ("처음엔 도구 받기", format!("처음 한 번 누끼 도구({}MB)를 받아요. 사진은 PC 밖으로 나가지 않아요.", crate::cutout::MODEL_MB)),
+        "excel" => ("탭마다 칸으로", "줄마다 한 행, 탭으로 나뉜 곳마다 한 칸이 돼요.".to_string()),
+        "hwp" => ("한글 파일로", "한글(.hwpx) 파일을 만들어요. 탭은 빈칸 네 개로 바꿔요.".to_string()),
+        _ => ("", String::new()),
+    };
+    Seg { id: id.into(), label: label.into(), sub: sub.into(), hint: hint.into(), tip }
 }
 
 /// GIF 칸 — 여러 장이면 이어 움직이고, 한 장이면 동작 칸이 나뉜 그림일 때 움직인다 (anim.rs)
@@ -228,6 +255,8 @@ fn gif_seg(n: usize) -> Seg {
     } else {
         g.hint = "동작 칸이 있으면 움직여요".into();
     }
+    // 10-20 CEO — GIF 칸에 올리면 무엇이 필요한지 보이게
+    g.tip = "같은 크기 이미지 여러 장, 또는 일정한 간격의 캐릭터들이 있는 이미지가 필요해요".into();
     g
 }
 
@@ -241,7 +270,7 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
     let shown_ext = if exts.iter().all(|e| *e == exts[0]) { exts[0].to_uppercase() } else { "파일".into() };
     let title = format!("{shown_ext} {n}개");
     if kinds.iter().any(|k| *k == "none") {
-        return Plan { kind: "none".into(), title, note: "그림·소리·PDF 만 바꿀 수 있어요".into(), segs: vec![] };
+        return Plan { kind: "none".into(), title, note: "그림·소리·PDF·글(TXT)만 바꿀 수 있어요".into(), segs: vec![] };
     }
     if kinds.iter().any(|k| *k != kinds[0]) {
         return Plan { kind: "mixed".into(), title, note: "같은 종류끼리 끌어 주세요".into(), segs: vec![] };
@@ -251,6 +280,7 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
         // 이미 그 형식인 것만 있으면 그 칸은 뺀다 (png 만 끌었는데 PNG 칸이 있으면 헷갈린다)
         "image" => s.image.iter().filter(|t| !exts.iter().all(|e| e == *t)).cloned().collect(),
         "audio" => s.audio.iter().filter(|t| !exts.iter().all(|e| e == *t)).cloned().collect(),
+        "text" => s.text.clone(),
         _ => s.pdf.clone(),
     };
     let note = if ids.is_empty() { "설정에서 보일 형식을 골라 주세요".into() } else { "가운데에 놓으면 취소".into() };
@@ -327,6 +357,11 @@ struct Ring {
 
 static RING: Mutex<Option<Ring>> = Mutex::new(None);
 static APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// 다른 모듈이 창을 만들 때 (pdfprint.rs)
+pub fn app() -> Option<AppHandle> {
+    APP.get().cloned()
+}
 /// 놓기를 받는 둥근 창 (HWND). 0 이면 아직 없음
 static DROP_HWND: AtomicIsize = AtomicIsize::new(0);
 
@@ -534,6 +569,23 @@ struct Done {
     note: String,
 }
 
+/// 형식 바꾸기가 아니라 파일 하나씩 따로 하는 칸 — 정사각(SNS) · 1MB · 누끼 · 글(TXT) → 문서
+const ONE_BY_ONE: &[&str] = &["square", "small", "cutout", "pdf", "hwp", "word", "excel"];
+
+/// ONE_BY_ONE 칸 하나를 파일 하나에 (actions.rs · cutout.rs · text.rs). progress 는 그 파일 안에서 0~1
+pub fn one(target: &str, src: &Path, dir: &Path, progress: &mut dyn FnMut(f64)) -> Result<crate::convert::OutputFile, String> {
+    match target {
+        "square" => crate::actions::square(src, dir),
+        "small" => crate::actions::small(src, dir),
+        "cutout" => crate::cutout::cutout(src, dir, progress),
+        "pdf" => crate::text::pdf(src, dir),
+        "hwp" => crate::text::hwpx(src, dir),
+        "word" => crate::text::docx(src, dir),
+        "excel" => crate::text::xlsx(src, dir),
+        _ => Err(format!("모르는 칸이에요: {target}")),
+    }
+}
+
 fn run(paths: Vec<String>, target: String) {
     let s = settings();
     let total = paths.len();
@@ -559,11 +611,16 @@ fn run(paths: Vec<String>, target: String) {
                 f
             }
         };
-        // 정사각(SNS) · 1MB 는 형식 바꾸기가 아니라 actions.rs 가 한 장씩
-        if target == "square" || target == "small" {
+        if ONE_BY_ONE.contains(&target.as_str()) {
+            let first_cutout = target == "cutout" && !crate::cutout::ready();
             for (i, f) in files.iter().enumerate() {
                 emit("qconv:progress", Prog { done: base + i, total, frac: (base + i) as f64 / total.max(1) as f64 });
-                let r = if target == "square" { crate::actions::square(Path::new(f), &dir) } else { crate::actions::small(Path::new(f), &dir) };
+                let r = one(&target, Path::new(f), &dir, &mut |p| {
+                    emit("qconv:progress", Prog { done: base + i, total, frac: ((base + i) as f64 + p) / total.max(1) as f64 });
+                });
+                if first_cutout && crate::cutout::ready() {
+                    out.note = "누끼 도구를 받았어요".into();
+                }
                 match r {
                     Ok(_) => out.made += 1,
                     Err(e) => {
@@ -943,7 +1000,7 @@ mod drop_win {
                 target.DragEnter(&data, MODIFIERKEYS_FLAGS(0), POINTL { x: 1100, y: 1010 }, &mut eff).unwrap();
                 assert_eq!(eff, DROPEFFECT_COPY, "끄는 동안에도 복사로 답해야 한다");
                 let segs: Vec<String> = ring(|r| r.plan.segs.iter().map(|g| g.id.clone()).collect());
-                assert_eq!(segs, ["jpg", "webp", "gif", "square", "small"], "PNG 를 끌면 PNG 칸은 없다");
+                assert_eq!(segs, ["jpg", "webp", "gif", "square", "small", "cutout"], "PNG 를 끌면 PNG 칸은 없다");
                 assert_eq!(ring(|r| r.hover), Some(1), "오른쪽 조금 아래는 두 번째 칸(WEBP)");
 
                 // 가운데에 놓으면 아무 일도 없다
@@ -1291,7 +1348,7 @@ mod tests {
         assert_eq!(p.kind, "image");
         assert_eq!(p.title, "JPG 2개");
         assert!(!p.segs.iter().any(|g| g.id == "jpg"), "전부 JPG 면 JPG 칸은 없다");
-        assert_eq!(p.segs.len(), 5);
+        assert_eq!(p.segs.len(), 6);
         let gif = p.segs.iter().find(|g| g.id == "gif").expect("GIF 칸은 기본으로 있다");
         assert_eq!((gif.sub.as_str(), gif.hint.as_str()), ("2장 이어서", "2장을 이어 움직여요"), "여러 장이면 이어 움직인다고 알려 준다");
         let one = plan(&["걷기.png".into()], &s);
@@ -1339,12 +1396,32 @@ mod tests {
         assert_eq!(Settings::default().key, "shift");
     }
 
+    /// 10-20 CEO "txt 잡고 끌면 pdf, 한글, word … 엑셀" · "누끼버튼" · "gif쪽으로 갔을때 설명"
+    #[test]
+    fn text_files_get_document_cells_and_images_get_cutout_and_a_gif_tip() {
+        let s = Settings::default();
+        let t = plan(&["C:\\메모.txt".into()], &s);
+        assert_eq!(t.kind, "text");
+        assert_eq!(t.segs.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["pdf", "hwp", "word", "excel"]);
+        assert!(t.segs.iter().find(|g| g.id == "excel").unwrap().tip.contains("탭"));
+        let i = plan(&["a.png".into()], &s);
+        let cut = i.segs.iter().find(|g| g.id == "cutout").expect("그림이면 누끼 칸");
+        assert!(cut.tip.contains("PC 밖으로 나가지 않아요"));
+        assert_eq!(i.segs.iter().find(|g| g.id == "gif").unwrap().tip, "같은 크기 이미지 여러 장, 또는 일정한 간격의 캐릭터들이 있는 이미지가 필요해요");
+        // 0.1.3 까지 저장된 설정엔 누끼를 한 번 더하고, 지금 판에서 끈 사람은 그대로
+        let old: Settings = serde_json::from_value(serde_json::json!({ "image": ["png"], "ver": 4 })).unwrap();
+        assert_eq!(old.clean().image, ["png", "cutout"]);
+        let off: Settings = serde_json::from_value(serde_json::json!({ "image": ["png"], "text": ["excel", "모름"], "ver": 5 })).unwrap();
+        let off = off.clean();
+        assert_eq!((off.image, off.text), (vec!["png".to_string()], vec!["excel".to_string()]));
+    }
+
     /// 10-20 CEO "GIF 로 변환도 가능하게" — 0.1.0 때 저장된 목록에는 GIF 칸을 한 번 더하고, 그 뒤에 끈 사람은 그대로
     #[test]
     fn the_gif_cell_is_added_once_for_old_settings() {
         let old: Settings = serde_json::from_value(serde_json::json!({ "image": ["png", "jpg", "webp", "square", "small"], "ver": 3 })).unwrap();
-        assert_eq!(old.clean().image, ["png", "jpg", "webp", "gif", "square", "small"]);
-        let off: Settings = serde_json::from_value(serde_json::json!({ "image": ["png", "jpg"], "ver": 4 })).unwrap();
+        assert_eq!(old.clean().image, ["png", "jpg", "webp", "gif", "square", "small", "cutout"]);
+        let off: Settings = serde_json::from_value(serde_json::json!({ "image": ["png", "jpg"], "ver": 5 })).unwrap();
         assert_eq!(off.clean().image, ["png", "jpg"], "지금 판에서 끈 GIF 는 다시 켜지 않는다");
         let odd: Settings = serde_json::from_value(serde_json::json!({ "gifMs": 7, "ver": 4 })).unwrap();
         assert_eq!(odd.clean().gif_ms, crate::anim::DEFAULT_MS, "모르는 빠르기는 보통으로");

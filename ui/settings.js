@@ -10,7 +10,9 @@ const invoke = (cmd, args) => T.core.invoke(cmd, args);
 
 const KEYS = [{ id: 'shift', label: 'Shift' }, { id: 'ctrl', label: 'Ctrl' }, { id: 'alt', label: 'Alt' }];
 const IMAGE = [{ id: 'png', label: 'PNG' }, { id: 'jpg', label: 'JPG' }, { id: 'webp', label: 'WEBP' }, { id: 'bmp', label: 'BMP' }, { id: 'gif', label: 'GIF (움직이는 그림)' },
-  { id: 'square', label: '정사각 (SNS 1080)' }, { id: 'small', label: '1MB 이하' }];
+  { id: 'square', label: '정사각 (SNS 1080)' }, { id: 'small', label: '1MB 이하' }, { id: 'cutout', label: '누끼 (배경 지우기)' }];
+// 글(TXT) → 문서 (Rust ring::TEXT_OPTS 와 같게)
+const TEXT = [{ id: 'pdf', label: 'PDF' }, { id: 'hwp', label: '한글 (HWPX)' }, { id: 'word', label: 'Word' }, { id: 'excel', label: '엑셀 (탭마다 칸)' }];
 const AUDIO = [{ id: 'mp3', label: 'MP3' }, { id: 'wav', label: 'WAV' }];
 // 움직이는 GIF 한 장을 보여 주는 시간 (Rust anim::SPEEDS 와 같아야 한다)
 const GIF_SPEEDS = [{ id: 60, label: '빠르게 0.06초' }, { id: 100, label: '보통 0.1초' }, { id: 200, label: '느리게 0.2초' }, { id: 500, label: '아주 느리게 0.5초' }];
@@ -102,6 +104,7 @@ function render() {
     s.image.includes('gif') ? row('GIF 한 장', seg(GIF_SPEEDS, s.gifMs, (v) => set({ gifMs: v }))) : null,
     row('소리일 때', chips(AUDIO, s.audio, toggle('audio'))),
     row('PDF 일 때', chips(PDF, s.pdf, toggle('pdf'))),
+    row('글(TXT)일 때', chips(TEXT, s.text || [], toggle('text'))),
     row('윈도우 켤 때', seg([{ id: 'off', label: '같이 안 켜기' }, { id: 'on', label: '트레이에 같이 켜기' }], S.run ? 'on' : 'off', async (v) => {
       const want = v === 'on';
       S.run = want; render();
@@ -139,7 +142,7 @@ function render() {
       el('li', {}, ['그만두려면 가운데에 놓거나 Esc. 메뉴 밖 다른 폴더에 놓으면 윈도우가 평소처럼 옮겨요.']),
     ]),
     el('p', { class: 'hint' }, ['GIF 칸: 여러 장을 같이 끌어 놓으면 이름 순서(1, 2, … 10)로 이어 움직이는 GIF 하나를 만들어요. 동작이 칸칸이 그려진 한 장을 놓으면 칸을 나눠 움직여요. 긴 변은 800px 까지 줄여요.']),
-    el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로).']),
+    el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 누끼(배경을 지운 투명 PNG — 처음 한 번 누끼 도구 179MB 를 받고, 사진은 PC 밖으로 나가지 않아요), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로), 글(TXT) → PDF · 한글 · Word · 엑셀(탭마다 칸).']),
   ]);
 
   const foot = el('footer', { class: 'foot' }, [
