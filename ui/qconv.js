@@ -14,7 +14,7 @@ const NS = 'http://www.w3.org/2000/svg';
 
 const T = window.__TAURI__;
 const root = document.getElementById('ring');
-let v = { shown: false, busy: false, preview: false, plan: { kind: 'wait', title: '', note: '', segs: [] }, hover: null, trash: false, left: 0, total: 0 };
+let v = { shown: false, busy: false, preview: false, plan: { kind: 'wait', title: '', note: '', segs: [] }, hover: null, trash: false, left: 0, total: 0, character: 'cat' };
 let prog = null; // { done, total, frac }
 let done = null; // { made, failed, firstError, movedTo }
 let trashMsg = null; // 쓰레기통이 일할 때 가운데 글 { title, note }
@@ -146,7 +146,7 @@ function drawHub(segs) {
     add(text(C, C, 'ht', `${Math.round(f * 100)}%`));
   } else {
     const hov = v.hover != null && segs[v.hover];
-    const title = v.trash ? '쓰레기통' : hov ? hov.label : v.plan.title || '';
+    const title = v.trash ? ch.name : hov ? hov.label : v.plan.title || '';
     const note = v.trash ? '놓으면 휴지통으로' : hov ? hov.hint || '놓으면 바꿔요' : v.plan.note || '';
     add(text(C, C - 14, 'ht', title.length > 9 ? title.slice(0, 8) + '…' : title));
     // 가운데 원(지름 100px) 안에 들어가게 9자 안팎에서 줄을 바꾼다 — 띄어쓰기에서 끊는다
@@ -195,16 +195,36 @@ function render() {
 
 // ── 쓰레기통 캐릭터 ─────────────────────────────────────────────────────────
 // 그림은 ui/mago/*.webp (같은 바닥선 · 높이 240 → 화면에서 120). 두 장을 겹쳐 두고 바꿀 때 살짝 겹쳐 넘긴다(깜빡임 없이).
+// 캐릭터마다 자세 15장이 같은 이름으로 있다 — 쓰레기통은 ui/mago/, 고양이는 ui/mago/cat/ (설정 character, Rust CHARACTERS 와 같게).
+// 음식 · 하트 · 반짝이는 둘이 같이 쓴다. mouth 는 좌우를 뒤집은 그림에서 입 자리 (쓰레기통 자리 기준).
+const CHARS = {
+  cat: { dir: './mago/cat/', name: '고양이', mouth: [-14, -26] },
+  trash: { dir: './mago/', name: '쓰레기통', mouth: [-6, -16] },
+};
 const POSES = ['idle', 'wait', 'wait_heart', 'feed_near', 'eating', 'chewing', 'satisfied', 'more_please', 'full', 'poop_start', 'poop_done', 'menu_open', 'crown', 'love', 'sleep'];
 const FOODS = ['food_1', 'food_2', 'food_3', 'food_4'];
+let ch = CHARS.cat;
 const src = (n) => `./mago/${n}.webp`;
-for (const n of [...POSES, ...FOODS, 'fx_hearts', 'fx_spark']) { const i = new Image(); i.src = src(n); }
+const poseSrc = (n) => `${ch.dir}${n}.webp`;
+for (const n of [...FOODS, 'fx_hearts', 'fx_spark']) { const i = new Image(); i.src = src(n); }
+const preload = () => POSES.forEach((n) => { const i = new Image(); i.src = poseSrc(n); });
+preload();
+
+/** 설정에서 캐릭터를 바꿨으면 다음에 고리가 뜰 때 그 캐릭터로 */
+function useChar(id) {
+  const next = CHARS[id] || CHARS.cat;
+  if (next === ch) return;
+  ch = next;
+  preload();
+  mago.imgs.forEach((im) => { im.src = poseSrc('idle'); });
+  mago.pose = 'idle';
+}
 
 const mago = (() => {
   const a = h('img', 'pose on');
   const b = h('img', 'pose');
   a.alt = b.alt = '';
-  a.src = src('idle');
+  a.src = poseSrc('idle');
   const breath = h('div', 'breath', [a, b]);
   const squash = h('div', 'squash', [breath]);
   const tilt = h('div', 'tilt', [squash]);
@@ -229,7 +249,7 @@ function setPose(name) {
   if (mago.pose === name) return;
   mago.pose = name;
   const [on, off] = mago.imgs[0].classList.contains('on') ? mago.imgs : [mago.imgs[1], mago.imgs[0]];
-  off.src = src(name);
+  off.src = poseSrc(name);
   const flip = () => { if (mago.pose === name) { off.classList.add('on'); on.classList.remove('on'); } };
   if (off.complete) flip(); else off.decode().then(flip, flip);
   mago.el.classList.toggle('sleeping', name === 'sleep');
@@ -296,7 +316,7 @@ function throwFood(n) {
   if (!stage) return;
   const from = cur ? [C + cur[0], C + cur[1]] : [TRASH.x - 40, TRASH.y - 60];
   // 캐릭터가 왼쪽(고리 쪽)을 보고 있어 입이 가운데보다 조금 왼쪽
-  const mouth = [TRASH.x - 6, TRASH.y - 16];
+  const mouth = [TRASH.x + ch.mouth[0], TRASH.y + ch.mouth[1]];
   for (let k = 0; k < Math.min(n, 4); k++) {
     const f = h('img', 'food');
     f.src = src(FOODS[(Math.random() * FOODS.length) | 0]);
@@ -379,6 +399,8 @@ function afterEat(r) {
 T.event.listen('qconv:view', (e) => {
   const nv = e.payload;
   if (!nv.shown || !v.shown) { prog = null; done = null; }
+  // 고리가 숨어 있을 때만 바꾼다 — 먹는 도중에 캐릭터가 바뀌지 않게
+  if (!v.shown) useChar(nv.character);
   v = nv;
   render();
 });
@@ -400,5 +422,5 @@ T.event.listen('qconv:found', (e) => {
   say('숨은 메뉴를 찾았어요', `「${e.payload}」 — 메뉴를 닫으면 열려요`);
   later(2200, () => { if (act === 'found') { act = null; hush(); follow(); } });
 });
-T.core.invoke('qconv_view').then((nv) => { if (nv) { v = nv; render(); } }).catch(() => {});
+T.core.invoke('qconv_view').then((nv) => { if (nv) { useChar(nv.character); v = nv; render(); } }).catch(() => {});
 render();

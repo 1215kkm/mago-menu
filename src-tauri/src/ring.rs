@@ -50,6 +50,8 @@ const PREFS_KEY: &str = "quickConvert";
 pub const IMAGE_OPTS: &[&str] = &["png", "jpg", "webp", "bmp", "gif", "square", "small"];
 pub const AUDIO_OPTS: &[&str] = &["mp3", "wav"];
 pub const PDF_OPTS: &[&str] = &["jpg-pages", "jpg-one", "png-pages", "png-one"];
+/// 고를 수 있는 캐릭터 (ui/qconv.js · settings.js 의 CHARS 와 같아야 한다)
+pub const CHARACTERS: &[&str] = &["cat", "trash"];
 
 // ── 설정 ───────────────────────────────────────────────────────────────────
 
@@ -66,6 +68,8 @@ pub struct Settings {
     pub dpi: u32,
     /// 움직이는 GIF 한 장을 보여 주는 시간 (ms) — anim::SPEEDS 중 하나
     pub gif_ms: u32,
+    /// 고리 옆 캐릭터 — CHARACTERS 중 하나 (그림은 ui/mago/<이름>/, 쓰레기통은 ui/mago/)
+    pub character: String,
     /// 설정 모양 판. 0 = v0.3.45 (기본 Shift · 꺼짐) · 1 = v0.3.46 (기본 Ctrl) · 2 = v0.3.47 (Shift) · 3 = MAGO 0.1.0 (기본 켜짐) · 4 = 지금 (GIF 칸 기본).
     /// 칸이 없으면 0 으로 읽는다 — 구조체 전체 기본값(지금 판)을 쓰면 옛 설정을 알아볼 수 없다
     #[serde(default)]
@@ -88,6 +92,8 @@ impl Default for Settings {
             quality: 92,
             dpi: 150,
             gif_ms: crate::anim::DEFAULT_MS,
+            // 0.1.2 부터 검은 고양이가 기본 (10-20 CEO "고양이 케릭터 추가해서 기본으로"). 칸이 없는 옛 설정도 고양이로 읽힌다
+            character: "cat".into(),
             ver: SETTINGS_VER,
         }
     }
@@ -121,6 +127,9 @@ impl Settings {
         self.dpi = if self.dpi >= 300 { 300 } else { 150 };
         if !crate::anim::SPEEDS.contains(&self.gif_ms) {
             self.gif_ms = crate::anim::DEFAULT_MS;
+        }
+        if !CHARACTERS.contains(&self.character.as_str()) {
+            self.character = "cat".into();
         }
         self
     }
@@ -337,10 +346,12 @@ struct View {
     trash: bool,
     left: u32,
     total: u32,
+    character: String,
 }
 
 fn view() -> View {
-    ring(|r| View { shown: r.shown, busy: r.busy, preview: r.preview, plan: r.plan.clone(), hover: r.hover, trash: r.trash, left: r.left, total: r.total })
+    let character = settings().character;
+    ring(|r| View { shown: r.shown, busy: r.busy, preview: r.preview, plan: r.plan.clone(), hover: r.hover, trash: r.trash, left: r.left, total: r.total, character })
 }
 
 /// 고리가 떠 있거나 일하는 중인가 (업데이트 설치를 미룬다) — 쪽지 방이 열려 있어도 쓰는 중
@@ -1336,6 +1347,18 @@ mod tests {
         assert_eq!(off.clean().image, ["png", "jpg"], "지금 판에서 끈 GIF 는 다시 켜지 않는다");
         let odd: Settings = serde_json::from_value(serde_json::json!({ "gifMs": 7, "ver": 4 })).unwrap();
         assert_eq!(odd.clean().gif_ms, crate::anim::DEFAULT_MS, "모르는 빠르기는 보통으로");
+    }
+
+    /// 10-20 CEO "고양이 케릭터 추가해서 기본으로 해주고 설정에서 선택할수 있게"
+    #[test]
+    fn the_cat_is_the_default_character_and_the_trash_can_still_be_picked() {
+        assert_eq!(Settings::default().character, "cat");
+        let old: Settings = serde_json::from_value(serde_json::json!({ "key": "alt", "ver": 4 })).unwrap();
+        assert_eq!(old.clean().character, "cat", "0.1.1 까지 저장된 설정(캐릭터 칸 없음)도 고양이로");
+        let trash: Settings = serde_json::from_value(serde_json::json!({ "character": "trash", "ver": 4 })).unwrap();
+        assert_eq!(trash.clean().character, "trash", "쓰레기통을 고른 사람은 그대로");
+        let odd: Settings = serde_json::from_value(serde_json::json!({ "character": "../x", "ver": 4 })).unwrap();
+        assert_eq!(odd.clean().character, "cat", "모르는 이름은 그림 주소에 넣지 않는다");
     }
 
     /// 10-19 CEO "컴뚝딱이 켜져 있으면 윈도우 폴더에서 사용되는 기능" — 기본 켜짐. 옛 판의 꺼짐(기본값)은 한 번 켜고, 지금 판에서 끈 것은 그대로

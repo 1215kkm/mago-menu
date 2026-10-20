@@ -14,6 +14,8 @@ const IMAGE = [{ id: 'png', label: 'PNG' }, { id: 'jpg', label: 'JPG' }, { id: '
 const AUDIO = [{ id: 'mp3', label: 'MP3' }, { id: 'wav', label: 'WAV' }];
 // 움직이는 GIF 한 장을 보여 주는 시간 (Rust anim::SPEEDS 와 같아야 한다)
 const GIF_SPEEDS = [{ id: 60, label: '빠르게 0.06초' }, { id: 100, label: '보통 0.1초' }, { id: 200, label: '느리게 0.2초' }, { id: 500, label: '아주 느리게 0.5초' }];
+// 고리 옆 캐릭터 (Rust ring::CHARACTERS · qconv.js CHARS 와 같게) — 버튼에 그 캐릭터 그림을 같이 보인다
+const CHARS = [{ id: 'cat', label: '검은 고양이', img: './mago/cat/idle.webp', eats: '고양이가' }, { id: 'trash', label: '쓰레기통', img: './mago/idle.webp', eats: '쓰레기통이' }];
 const PDF = [{ id: 'jpg-pages', label: 'JPG 쪽마다' }, { id: 'jpg-one', label: 'JPG 한 장으로' }, { id: 'png-pages', label: 'PNG 쪽마다' }, { id: 'png-one', label: 'PNG 한 장으로' }];
 
 const S = { s: null, run: false, err: null, toast: null, m: null };
@@ -34,7 +36,7 @@ function el(tag, attrs, kids) {
 function seg(items, cur, pick) {
   return el('div', { class: 'seg', role: 'radiogroup' }, items.map((it) => el('button', {
     type: 'button', class: it.id === cur ? 'on' : null, role: 'radio', 'aria-checked': it.id === cur ? 'true' : 'false', onclick: () => it.id !== cur && pick(it.id),
-  }, [it.label])));
+  }, [].concat(it.label))));
 }
 
 /** 여러 개 고르기 — 누를 때마다 켜고 끈다 */
@@ -82,6 +84,7 @@ function render() {
     return;
   }
   const keyName = (KEYS.find((k) => k.id === s.key) || KEYS[0]).label;
+  const who = CHARS.find((c) => c.id === s.character) || CHARS[0];
   const toggle = (field) => (id, add) => set({ [field]: add ? s[field].concat(id) : s[field].filter((x) => x !== id) });
 
   const head = el('header', { class: 'head' }, [
@@ -93,6 +96,8 @@ function render() {
     el('h2', {}, ['설정']),
     row('쓰기', seg([{ id: 'off', label: '끔' }, { id: 'on', label: '켬' }], s.enabled ? 'on' : 'off', (v) => set({ enabled: v === 'on' }, v === 'on' ? `켰어요 — 탐색기에서 ${keyName} 를 누른 채 파일을 끌어 보세요.` : '껐어요.'))),
     row('누를 키', seg(KEYS, s.key, (v) => set({ key: v }))),
+    row('캐릭터', seg(CHARS.map((c) => ({ id: c.id, label: [el('img', { class: 'who', src: c.img, alt: '' }), c.label] })), who.id,
+      (v) => set({ character: v }, `다음에 메뉴를 열면 ${CHARS.find((c) => c.id === v).eats} 기다려요.`))),
     row('그림일 때', chips(IMAGE, s.image, toggle('image'))),
     s.image.includes('gif') ? row('GIF 한 장', seg(GIF_SPEEDS, s.gifMs, (v) => set({ gifMs: v }))) : null,
     row('소리일 때', chips(AUDIO, s.audio, toggle('audio'))),
@@ -108,19 +113,19 @@ function render() {
     })),
     el('div', { class: 'actions' }, [el('button', { type: 'button', class: 'btn', onclick: () => invoke('qconv_preview').catch((e) => toast(String(e), true)) }, ['원형 메뉴 미리 보기'])]),
     el('p', { class: 'hint' }, [`이 프로그램이 켜져 있을 때만 돼요 (창을 닫아도 트레이에 있으면 돼요). JPG 는 화질 ${s.quality}, PDF 는 ${s.dpi}dpi 로 만들어요.`]),
-    el('p', { class: 'hint' }, ['메뉴 위에 놓은 파일은 복사로만 받아서 원본이 지워지거나 옮겨지지 않아요. 쓰레기통에 놓은 파일만 윈도우 휴지통으로 가요.']),
+    el('p', { class: 'hint' }, [`메뉴 위에 놓은 파일은 복사로만 받아서 원본이 지워지거나 옮겨지지 않아요. ${who.label}에게 먹인 파일만 윈도우 휴지통으로 가요.`]),
   ]);
 
   const m = S.m;
   const secret = m && el('section', { class: 'card' }, [
     el('h2', {}, ['숨은 메뉴']),
-    el('p', { class: 'muted' }, [`찾은 것 ${m.found.length} / ${m.total} · 쓰레기통이 먹은 파일 ${m.files || 0}개 · ${size(m.bytes || 0)} (${m.feeds}번)`]),
+    el('p', { class: 'muted' }, [`찾은 것 ${m.found.length} / ${m.total} · ${who.eats} 먹은 파일 ${m.files || 0}개 · ${size(m.bytes || 0)} (${m.feeds}번)`]),
     m.found.length
       ? el('ul', { class: 'found' }, m.found.map((f) => el('li', {}, [
         el('span', {}, [f.name]),
         el('button', { type: 'button', class: 'btn', onclick: () => invoke('secret_show', { id: f.id }).catch((e) => toast(String(e), true)) }, ['다시 보기']),
       ])))
-      : el('p', { class: 'hint' }, ['아직 하나도 못 찾았어요. 원형 메뉴 오른쪽 아래 쓰레기통에 파일을 먹여 보세요.']),
+      : el('p', { class: 'hint' }, [`아직 하나도 못 찾았어요. 원형 메뉴 오른쪽 아래 ${who.label}에게 파일을 먹여 보세요.`]),
     m.left ? el('p', { class: 'hint' }, [`못 찾은 숨은 메뉴가 ${m.left}개 더 있어요. 어떻게 여는지는 비밀이에요.`]) : null,
   ]);
 
@@ -130,7 +135,7 @@ function render() {
       el('li', {}, ['탐색기(다운로드 폴더 등)에서 바꿀 파일을 고르세요. 여러 개도 돼요.']),
       el('li', {}, [el('kbd', {}, [keyName]), ' 를 누르고 있는 동안 원형 메뉴가 떠요. 끄는 도중에 눌러도 되고, 떼면 닫혀요.']),
       el('li', {}, ['원하는 칸 위에서 놓으면 ', el('b', {}, ['원본 옆에']), ' 바뀐 파일이 생겨요. 원본은 그대로예요.']),
-      el('li', {}, ['오른쪽 아래 ', el('b', {}, ['쓰레기통']), '에 놓으면 냠냠 먹고 윈도우 휴지통으로 보내요. 휴지통에서 되살릴 수 있어요.']),
+      el('li', {}, ['오른쪽 아래 ', el('b', {}, [who.label]), '에게 놓으면 냠냠 먹고 윈도우 휴지통으로 보내요. 휴지통에서 되살릴 수 있어요.']),
       el('li', {}, ['그만두려면 가운데에 놓거나 Esc. 메뉴 밖 다른 폴더에 놓으면 윈도우가 평소처럼 옮겨요.']),
     ]),
     el('p', { class: 'hint' }, ['GIF 칸: 여러 장을 같이 끌어 놓으면 이름 순서(1, 2, … 10)로 이어 움직이는 GIF 하나를 만들어요. 동작이 칸칸이 그려진 한 장을 놓으면 칸을 나눠 움직여요. 긴 변은 800px 까지 줄여요.']),

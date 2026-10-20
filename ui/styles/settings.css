@@ -35,3 +35,6 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--light-bor
 /* 좁은 폭에서 칩·버튼 줄이 옆으로 넘치지 않게 (flex 항목의 최소 폭 = 내용 폭 이 기본이라 줄어들지 않는다) */
 .row > * { min-width: 0; max-width: 100%; }
 .head > div { min-width: 0; }
+/* 캐릭터 고르기 — 버튼에 그 캐릭터 그림을 같이 (그림은 오른쪽을 보고 있어 고리 화면처럼 뒤집는다) */
+.seg button:has(.who) { display: inline-flex; align-items: center; gap: 8px; padding: 4px 14px 4px 8px; }
+.seg .who { height: 36px; width: auto; transform: scaleX(-1); }
