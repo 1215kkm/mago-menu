@@ -27,7 +27,7 @@
 ## 빌드 · 시험
 ```
 cd src-tauri
-cargo test --lib          # 58개 (놓기 시험은 탐색기와 같은 셸 끌기 데이터로 — 마우스 안 움직임)
+cargo test --lib          # 59개 (놓기 시험은 탐색기와 같은 셸 끌기 데이터로 — 마우스 안 움직임)
 cargo build --release     # target\release\mago.exe (화면은 exe 에 들어 있다)
 ```
 배포: `scripts\release-build.ps1`(서명 설치 파일) → `python scripts/make-latest.py <판> "바뀐 점"` → GitHub 릴리스 (HANDOFF.md 「배포」).

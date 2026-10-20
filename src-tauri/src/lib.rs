@@ -35,6 +35,21 @@ pub fn log(line: &str) {
     }
 }
 
+/// 트레이 그림 — 설정에서 고른 캐릭터 얼굴 (exe·바탕화면 아이콘은 기본 캐릭터인 고양이로 고정)
+fn tray_icon(character: &str) -> tauri::image::Image<'static> {
+    let png: &[u8] = if character == "trash" { include_bytes!("../icons/tray-trash.png") } else { include_bytes!("../icons/tray-cat.png") };
+    let rgba = image::load_from_memory(png).expect("트레이 그림").to_rgba8();
+    let (w, h) = rgba.dimensions();
+    tauri::image::Image::new_owned(rgba.into_raw(), w, h)
+}
+
+/// 설정에서 캐릭터를 바꾸면 트레이 그림도 바로 바꾼다
+pub fn set_tray_character(app: &tauri::AppHandle, character: &str) {
+    if let Some(t) = app.tray_by_id("main") {
+        let _ = t.set_icon(Some(tray_icon(character)));
+    }
+}
+
 fn show_settings(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
@@ -140,7 +155,7 @@ pub fn run() {
             let quit = MenuItem::with_id(app, "quit", "끝내기", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().cloned().expect("아이콘"))
+                .icon(tray_icon(&ring::settings().character))
                 .tooltip("MAGO — 탐색기에서 Shift 를 누른 채 파일을 끌어 보세요")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -178,6 +193,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 10-20 CEO "케릭터를 고양이로 설정했는데 … 트레이아이콘이 쓰레기통" — 캐릭터마다 트레이 그림이 다르고 둘 다 읽힌다
+    #[test]
+    fn the_tray_icon_follows_the_character() {
+        let cat = tray_icon("cat");
+        let trash = tray_icon("trash");
+        assert_eq!((cat.width(), cat.height()), (64, 64));
+        assert_eq!((trash.width(), trash.height()), (64, 64));
+        assert_ne!(cat.rgba(), trash.rgba());
+        assert_eq!(tray_icon("모름").rgba(), cat.rgba(), "모르는 값은 기본(고양이)");
+    }
 
     /// 시험용 exe 는 대표님 PC 시작프로그램에 박히면 안 된다 — 설치된 exe 만 기본 켬
     #[test]

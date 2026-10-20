@@ -1,6 +1,6 @@
 [package]
 name = "mago"
-version = "0.1.2"
+version = "0.1.3"
 description = "MAGO — 탐색기에서 Shift 를 누른 채 파일을 끌면 뜨는 원형 메뉴와 쓰레기통"
 authors = ["1215kkm"]
 edition = "2021"

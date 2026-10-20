@@ -1222,7 +1222,7 @@ pub fn qconv_settings_get() -> Settings {
 
 /// 화면이 바뀐 칸만 보낸다
 #[tauri::command]
-pub fn qconv_settings_set(patch: Value) -> Result<Settings, String> {
+pub fn qconv_settings_set(app: AppHandle, patch: Value) -> Result<Settings, String> {
     let mut v = serde_json::to_value(settings()).map_err(|e| e.to_string())?;
     if let (Some(dst), Some(src)) = (v.as_object_mut(), patch.as_object()) {
         for (k, x) in src {
@@ -1231,7 +1231,8 @@ pub fn qconv_settings_set(patch: Value) -> Result<Settings, String> {
     }
     let s = serde_json::from_value::<Settings>(v).map_err(|e| format!("설정을 알아보지 못했어요: {e}"))?.clean();
     save(&s)?;
-    crate::log(&format!("[MAGO] 설정 — 켬={} 키={}", s.enabled, s.key));
+    crate::set_tray_character(&app, &s.character);
+    crate::log(&format!("[MAGO] 설정 — 켬={} 키={} 캐릭터={}", s.enabled, s.key, s.character));
     Ok(s)
 }
 
