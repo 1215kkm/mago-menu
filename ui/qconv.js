@@ -156,11 +156,48 @@ function drawHub(segs) {
   }
 }
 
+// ── 끌고 있는 파일 목록 ─────────────────────────────────────────────────────
+// 10-24 CEO "원형메뉴가 나온상황에 어떤게 1번인지 2번인지 선택한 파일 목록이 번호랑 같이 보이게".
+// 고리 위 빈자리에 받은 순서 그대로 번호와 이름. 다섯 개가 넘으면 두 줄(왼쪽 1~5, 오른쪽 6~10), 열 개가 넘으면 9개 + "외 N개".
+// 바꾸는 동안은 지금 하는 파일에 색, 마친 파일 번호는 초록.
+const LIST_MAX = 10;
+const listEl = h('div', 'files');
+let listKey = '';
+
+function drawList() {
+  const files = (v.plan && v.plan.files) || [];
+  const key = files.join('\n');
+  if (key !== listKey) {
+    listKey = key;
+    listEl.replaceChildren();
+    listEl.classList.toggle('on', files.length > 1);
+    listEl.classList.toggle('two', files.length > 5);
+    if (files.length > 1) {
+      const shown = files.length > LIST_MAX ? files.slice(0, LIST_MAX - 1) : files;
+      const ol = h('ol', '', shown.map((f, i) => {
+        const dot = f.lastIndexOf('.');
+        // 이름이 길면 앞을 줄이고 확장자는 늘 보이게 (여러 종류를 섞었을 때 무엇인지)
+        return h('li', '', [h('b', 'no', [String(i + 1)]), h('span', 'fn', [h('span', 'nm', [dot > 0 ? f.slice(0, dot) : f]), dot > 0 ? h('span', 'ex', [f.slice(dot)]) : null])]);
+      }));
+      if (files.length > LIST_MAX) ol.append(h('li', 'more', [`… 외 ${files.length - shown.length}개`]));
+      listEl.append(h('div', 'fh', [`놓으면 이 순서대로 · ${files.length}개`]), ol);
+    }
+  }
+  // 바꾸는 중 — 지금 파일 · 마친 파일 (먹이는 중엔 표시하지 않는다)
+  const working = !trashMsg && (v.busy || prog || done);
+  const cur = done ? (done.failed ? -1 : Infinity) : prog ? prog.done : 0;
+  listEl.querySelectorAll('li:not(.more)').forEach((li, i) => {
+    li.classList.toggle('now', Boolean(working && !done && i === cur));
+    li.classList.toggle('ok', Boolean(working && i < cur));
+  });
+}
+
 function render() {
   if (!v.shown) {
     root.replaceChildren();
     ringEl = null;
     ringKey = '';
+    listKey = '';
     resetMago();
     return;
   }
@@ -171,7 +208,7 @@ function render() {
     ringEl = buildRing(segs);
     ringKey = key;
     if (pop) {
-      root.replaceChildren(h('div', 'stage pop', [ringEl, mago.el]));
+      root.replaceChildren(h('div', 'stage pop', [ringEl, listEl, mago.el]));
       wake();
     } else {
       root.firstChild.replaceChild(ringEl, root.firstChild.querySelector('svg.qc'));
@@ -192,6 +229,7 @@ function render() {
   }
   lastOn = on;
   drawHub(segs);
+  drawList();
   // 칸 설명 — 마우스가 올라간 칸에 긴 설명(tip)이 있으면 캐릭터 말풍선으로 (먹는 중 · 바꾸는 중엔 안 띄운다)
   const tipSeg = !act && !done && !prog && !v.busy && on != null ? segs[on] : null;
   if (tipSeg && tipSeg.tip) {
@@ -416,7 +454,14 @@ T.event.listen('qconv:view', (e) => {
   render();
 });
 T.event.listen('qconv:progress', (e) => { prog = e.payload; render(); });
-T.event.listen('qconv:done', (e) => { done = e.payload; prog = null; render(); });
+T.event.listen('qconv:done', (e) => {
+  done = e.payload;
+  prog = null;
+  tipOn = null;
+  render();
+  // 못 바꾼 것이 있으면 그 이유를 말풍선으로 (가운데 원에는 다 들어가지 않는다)
+  if (done.failed && done.firstError) say(done.made ? '일부는 넣지 못했어요' : '못 바꿨어요', done.firstError, true, true);
+});
 T.event.listen('qconv:cur', (e) => {
   cur = e.payload;
   wake();

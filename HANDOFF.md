@@ -27,6 +27,8 @@
 | `src-tauri/src/lib.rs` | 트레이·설정 창·한 번만 실행·로그·플러그인 |
 | `src-tauri/src/ring.rs` | **핵심.** 끌기+키 감지(watch) · 고리 창 · 놓기 받는 둥근 창(drop_win, OLE — 고리 원 + 쓰레기통 원) · 칸/쓰레기통 판정 · 바꾸기 · 먹이기(feed) |
 | `src-tauri/src/actions.rs` | 정사각 · 1MB · 휴지통(SHFileOperation, 되살리기 가능) |
+| `src-tauri/src/mix.rs` | 여러 종류 묶음 — PDF 하나로(lopdf 로 잇기) · 파일마다 PDF · JPG 한 장으로 · 쪽마다 JPG |
+| `src-tauri/src/office.rs` | Word · 엑셀 · 한글 → PDF (이 PC 의 그 프로그램을 숨겨서 COM 으로). 없으면 docx · xlsx · hwpx 는 글만 꺼내서 |
 | `src-tauri/src/content.rs` | 숨은 메뉴 내용(번들 사본 · 받은 것 · 검사) · 찾은 것 · 쪽지 방 창 · 링크 열기(내용 파일의 https 만) |
 | `src-tauri/src/updater.rs` | 자동 업데이트 |
 | `src-tauri/src/convert/` | 바꾸기 엔진 (컴뚝딱에서 그대로): ext_convert · convert · pdf_render |
@@ -86,6 +88,21 @@
 - 시험용 exe 만 `mago.exe --시험바꾸기 <칸> <파일>` — 끌기 없이 그 칸 일을 한 번 하고 로그에 남기고 끝남 (PDF · 누끼를 실제 프로그램 안에서 확인하는 데 씀. 설치한 exe 는 무시).
 - **번역(한·영·일·중)은 아직** — 글을 PC 밖 번역 서비스로 보내야 해서(규칙: 파일은 PC 밖으로 안 보냄) 대표님 결정 대기.
 - 확인: Word·엑셀은 이 PC 의 Office 2010 으로 숨겨 열어 내용 확인. HWPX 는 python-hwpx 로 다시 읽어 확인 — **한글 프로그램으로 여는 건 대표님 확인 필요**(이 PC 한글 2010 은 HWPX 를 못 열 수 있음).
+
+## 0.1.5 — 10-24 대표님 "jpg, txt, pdf, word, 한글파일, xlsx 를 모두 잡고 시프트드래그하면 모두 한장의 pdf, jpg 로 저장할건지, 쪽마다 저장할건지 … 순서는 선택한 파일순서대로 … 선택한 파일 목록이 번호랑 같이 보이게"
+- **묶음 칸** (`mix.rs`, 설정 `mix` — 칸이 없는 옛 설정은 넷 다): 종류가 섞였거나 Word·엑셀·한글이면 고리에 `PDF 하나로` · `PDF 파일마다` · `JPG 한 장으로` · `JPG 쪽마다`. 소리가 섞이면 "소리는 소리끼리". 같은 종류끼리는 예전 칸 그대로.
+  - PDF 하나로 → 1번 파일 옆 `1번이름 외 N개.pdf`. PDF 는 쪽을 그대로 잇고(물려받는 MediaBox·Resources 는 쪽에 적어 둠), 그림은 A4(모양 따라 가로·세로)에 여백 1cm · 긴 변 2400px. 잇지 못하는 PDF 는 쪽을 그림으로 그려 넣음.
+  - JPG 한 장으로 → `1번이름 외 N개.jpg` (PDF 쪽 폭에 맞춤, 그림은 줄이기만, 높이 60000px·1억 화소 넘으면 전체를 줄임). 쪽마다 → 새 폴더 `1번이름 외 N개` 에 `01_이름.jpg` · `02_보고서_1쪽.jpg` ….
+  - 파일마다 PDF → 각 원본 옆 `이름.pdf` (이미 PDF 는 그대로).
+  - 한 파일이 실패해도 나머지로 만든다. 실패 이유는 캐릭터 말풍선("3번: …").
+- **문서 → PDF** (`office.rs`): Word(`Word.Application`) · 엑셀(`Excel.Application`) · 한글(`HWPFrame.HwpObject`)을 화면에 안 띄우고 COM(IDispatch)으로 열어 PDF 로 저장. 읽기 전용 · 매크로 강제 끔 · 암호 문서는 엉터리 암호로 실패시킴 · 이미 켜 둔 Word·엑셀은 설정을 되돌리고 다른 문서가 열려 있으면 안 끔 · 3분 넘으면 포기.
+  - 함정 1: Word 2010 은 15자 넘는 암호를 넘기면 암호 없는 문서도 "명령을 정상적으로 종료할 수 없습니다" 로 못 연다 → 9자 `mago-nopw`.
+  - 함정 2: 빈 글 BSTR 이 null 이면 한글 SaveAs 가 "서버에서 예외 오류" → 빈 글은 `SysAllocString("")`.
+  - 한글 2010(이 PC)은 .hwpx 를 못 연다(`Open(…, "HWPX")` 가 false) → 글만 꺼내 PDF.
+  - 프로그램이 없으면 docx(word/document.xml) · xlsx(시트 순서·공유 글자) · hwpx(Contents/section*.xml)에서 글만 꺼내 PDF(엑셀은 표로). .doc · .xls · .hwp 는 그 프로그램이 있어야 함.
+- **번호 목록** (`qconv.js` drawList · `Plan.files`): 묶음일 때만 고리 위 빈자리에 `놓으면 이 순서대로 · N개` + 번호·이름(확장자는 늘 보임). 다섯 개 넘으면 두 줄, 열 개 넘으면 9개 + "외 N개". 바꾸는 동안 지금 파일에 색, 마친 번호는 초록.
+- **순서** (`ring.rs picked_order`): 탐색기의 끌기 데이터는 **잡은 파일부터, 앞서 고른 것을 거꾸로 돈다** — C→A→D 로 고르고 D 를 잡으면 [D, A, C], C 를 잡으면 [C, D, A], A 를 잡으면 [A, C, D] (`drop_win::tests::explorer_drag_data_order`: 탐색기 창을 셸로 골라 IShellView::GetItemObject(SVGIO_SELECTION) — 끌기 때 쓰는 것과 같은 데이터). 그래서 뒤집는다 → **마지막에 고른 파일을 잡고 끌면 고른 순서 그대로**, 다른 파일을 잡으면 한 칸 돈 순서(목록에 보임). **진짜 마우스로는 대표님 확인 필요.**
+- 시험용 exe `--시험바꾸기 mix-pdf <파일1> <파일2> …` — 받은 순서 그대로 (picked_order 를 거치지 않음).
 
 ## 다음에 할 일 (★ = 대표님 결정)
 1. ★ 숨은 메뉴 더 넣기 — 대표님 메모의 나머지(1분 탈출구 · 타임캡슐 · 파일 조합 해금 · 30초 미니게임 · 소리의 방 · 파일 감별사)를 어떤 순서로.

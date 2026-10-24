@@ -52,6 +52,8 @@ pub const AUDIO_OPTS: &[&str] = &["mp3", "wav"];
 /// 글(TXT) — text.rs
 pub const TEXT_OPTS: &[&str] = &["pdf", "hwp", "word", "excel"];
 pub const PDF_OPTS: &[&str] = &["jpg-pages", "jpg-one", "png-pages", "png-one"];
+/// 여러 종류를 같이 끌었을 때 (그림 · PDF · 글 · Word · 엑셀 · 한글) — mix.rs
+pub const MIX_OPTS: &[&str] = crate::mix::OPTS;
 /// 고를 수 있는 캐릭터 (ui/qconv.js · settings.js 의 CHARS 와 같아야 한다)
 pub const CHARACTERS: &[&str] = &["cat", "trash"];
 
@@ -68,6 +70,8 @@ pub struct Settings {
     pub pdf: Vec<String>,
     /// 글(TXT)일 때 보일 칸 — TEXT_OPTS 중
     pub text: Vec<String>,
+    /// 여러 종류를 같이 끌었을 때(또는 Word · 엑셀 · 한글) 보일 칸 — MIX_OPTS 중. 칸이 없는 옛 설정은 기본(전부)으로 읽힌다
+    pub mix: Vec<String>,
     pub quality: u8,
     pub dpi: u32,
     /// 움직이는 GIF 한 장을 보여 주는 시간 (ms) — anim::SPEEDS 중 하나
@@ -95,6 +99,7 @@ impl Default for Settings {
             audio: AUDIO_OPTS.iter().map(|s| s.to_string()).collect(),
             pdf: vec!["jpg-pages".into(), "jpg-one".into(), "png-pages".into()],
             text: TEXT_OPTS.iter().map(|s| s.to_string()).collect(),
+            mix: MIX_OPTS.iter().map(|s| s.to_string()).collect(),
             quality: 92,
             dpi: 150,
             gif_ms: crate::anim::DEFAULT_MS,
@@ -119,6 +124,7 @@ impl Settings {
         }
         self.image = keep(&self.image, IMAGE_OPTS);
         self.text = keep(&self.text, TEXT_OPTS);
+        self.mix = keep(&self.mix, MIX_OPTS);
         self.audio = keep(&self.audio, AUDIO_OPTS);
         self.pdf = keep(&self.pdf, PDF_OPTS);
         // 0.3.45(Shift)·0.3.46(Ctrl) 때 저장된 키는 그때의 기본값이다 — 한 번만 지금 기본(Shift)으로 맞춘다.
@@ -186,13 +192,15 @@ pub struct Seg {
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Plan {
-    /// image | audio | pdf | mixed | none
+    /// image | audio | pdf | text | mix(여러 종류 · 문서) | mixed(못 섞음) | none
     pub kind: String,
     /// 가운데에 크게 — "JPG 3개"
     pub title: String,
     /// 가운데 작은 글 — "가운데에 놓으면 취소" / 못 바꾸는 이유
     pub note: String,
     pub segs: Vec<Seg>,
+    /// 끌고 있는 파일 이름들 — 탐색기가 넘겨 준 순서 그대로 (고리 위 번호 목록). 두 개 이상일 때만
+    pub files: Vec<String>,
 }
 
 fn ext(p: &str) -> String {
@@ -209,6 +217,8 @@ fn kind_of(e: &str) -> &'static str {
         "pdf"
     } else if crate::text::TEXT_EXT.contains(&e) {
         "text"
+    } else if crate::office::is_doc(e) {
+        "doc"
     } else {
         "none"
     }
@@ -234,6 +244,10 @@ fn seg_of(id: &str) -> Seg {
         "hwp" => ("한글", "HWPX"),
         "word" => ("Word", "DOCX"),
         "excel" => ("엑셀", "탭마다 칸"),
+        "mix-pdf" => ("PDF", "하나로"),
+        "mix-pdfs" => ("PDF", "파일마다"),
+        "mix-jpg" => ("JPG", "한 장으로"),
+        "mix-jpgs" => ("JPG", "쪽마다"),
         _ => (id, ""),
     };
     let (hint, tip) = match id {
@@ -241,6 +255,10 @@ fn seg_of(id: &str) -> Seg {
         "cutout" => ("처음엔 도구 받기", format!("처음 한 번 누끼 도구({}MB)를 받아요. 사진은 PC 밖으로 나가지 않아요.", crate::cutout::MODEL_MB)),
         "excel" => ("탭마다 칸으로", "줄마다 한 행, 탭으로 나뉜 곳마다 한 칸이 돼요.".to_string()),
         "hwp" => ("한글 파일로", "한글(.hwpx) 파일을 만들어요. 탭은 빈칸 네 개로 바꿔요.".to_string()),
+        "mix-pdf" => ("1번부터 이어서", "위 목록의 1번부터 차례로 이어 PDF 한 파일로 만들어요. 1번 파일 옆에 저장해요.".to_string()),
+        "mix-pdfs" => ("하나씩 PDF 로", "파일마다 PDF 를 하나씩 원본 옆에 만들어요. 이미 PDF 인 것은 그대로 둬요.".to_string()),
+        "mix-jpg" => ("세로로 이어서", "위 목록의 1번부터 차례로 세로로 이어 긴 JPG 한 장으로 만들어요. 1번 파일 옆에 저장해요.".to_string()),
+        "mix-jpgs" => ("쪽마다 따로", "쪽마다 JPG 를 만들어 새 폴더에 01, 02 … 순서대로 넣어요.".to_string()),
         _ => ("", String::new()),
     };
     Seg { id: id.into(), label: label.into(), sub: sub.into(), hint: hint.into(), tip }
@@ -260,20 +278,53 @@ fn gif_seg(n: usize) -> Seg {
     g
 }
 
+/// 여러 종류 · 문서 칸 — 한 파일이면 "하나로"와 "파일마다"가 같아 하나만 둔다
+fn mix_segs(n: usize, has_doc: bool, s: &Settings) -> Vec<Seg> {
+    s.mix
+        .iter()
+        .filter(|id| n > 1 || id.as_str() != "mix-pdfs")
+        .map(|id| {
+            let mut g = seg_of(id);
+            if n == 1 && id == "mix-pdf" {
+                g.sub = "인쇄용".into();
+                g.hint = "PDF 로 바꿔요".into();
+                g.tip = "보이는 모양 그대로 PDF 를 만들어요.".into();
+            } else if n == 1 && id == "mix-jpg" {
+                g.tip = "쪽들을 세로로 이어 긴 JPG 한 장으로 만들어요.".into();
+            }
+            // 10-24 — Word · 엑셀 · 한글은 이 PC 의 그 프로그램을 숨겨서 열어 바꾼다 (office.rs)
+            if has_doc {
+                g.tip.push_str(" Word·엑셀·한글은 이 PC 에 깔린 그 프로그램으로 바꿔요.");
+            }
+            g
+        })
+        .collect()
+}
+
 pub fn plan(paths: &[String], s: &Settings) -> Plan {
     if paths.is_empty() {
-        return Plan { kind: "none".into(), title: "파일 없음".into(), note: "파일을 끌어 주세요".into(), segs: vec![] };
+        return Plan { kind: "none".into(), title: "파일 없음".into(), note: "파일을 끌어 주세요".into(), segs: vec![], files: vec![] };
     }
     let exts: Vec<String> = paths.iter().map(|p| ext(p)).collect();
     let kinds: Vec<&str> = exts.iter().map(|e| kind_of(e)).collect();
     let n = paths.len();
+    // 10-24 CEO "어떤게 1번인지 2번인지 선택한 파일 목록이 번호랑 같이 보이게" — 받은 순서(picked_order) 그대로.
+    // 순서가 결과를 바꾸는 묶음(mix)일 때만 띄운다 (GIF 는 이름 순서로 잇고, 다른 칸은 순서와 상관없다)
+    let names = || -> Vec<String> { if n > 1 { paths.iter().map(|p| Path::new(p).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| p.clone())).collect() } else { vec![] } };
     let shown_ext = if exts.iter().all(|e| *e == exts[0]) { exts[0].to_uppercase() } else { "파일".into() };
     let title = format!("{shown_ext} {n}개");
     if kinds.iter().any(|k| *k == "none") {
-        return Plan { kind: "none".into(), title, note: "그림·소리·PDF·글(TXT)만 바꿀 수 있어요".into(), segs: vec![] };
+        return Plan { kind: "none".into(), title, note: "그림·소리·PDF·글·문서만 바꿀 수 있어요".into(), segs: vec![], files: vec![] };
     }
-    if kinds.iter().any(|k| *k != kinds[0]) {
-        return Plan { kind: "mixed".into(), title, note: "같은 종류끼리 끌어 주세요".into(), segs: vec![] };
+    let same = kinds.iter().all(|k| *k == kinds[0]);
+    if !same || kinds[0] == "doc" {
+        // 10-24 CEO "jpg, txt, pdf, word, 한글파일, xlsx 를 모두 잡고 … 한 장의 pdf, jpg 로" — 소리만 섞을 수 없다
+        if kinds.iter().any(|k| *k == "audio") {
+            return Plan { kind: "mixed".into(), title, note: "소리는 소리끼리 끌어 주세요".into(), segs: vec![], files: vec![] };
+        }
+        let segs = mix_segs(n, kinds.iter().any(|k| *k == "doc"), s);
+        let note = if segs.is_empty() { "설정에서 보일 형식을 골라 주세요".into() } else { "가운데에 놓으면 취소".into() };
+        return Plan { kind: "mix".into(), title, note, segs, files: names() };
     }
     let kind = kinds[0];
     let ids: Vec<String> = match kind {
@@ -284,7 +335,7 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
         _ => s.pdf.clone(),
     };
     let note = if ids.is_empty() { "설정에서 보일 형식을 골라 주세요".into() } else { "가운데에 놓으면 취소".into() };
-    Plan { kind: kind.into(), title, note, segs: ids.iter().map(|i| if i == "gif" { gif_seg(n) } else { seg_of(i) }).collect() }
+    Plan { kind: kind.into(), title, note, segs: ids.iter().map(|i| if i == "gif" { gif_seg(n) } else { seg_of(i) }).collect(), files: vec![] }
 }
 
 /// 고리 가운데에서 (dx, dy) 논리 px 떨어진 곳이 몇 번째 칸인가. 칸은 12시 방향에서 시계 방향으로.
@@ -507,7 +558,7 @@ fn show_at(app: &AppHandle, cx: i32, cy: i32, preview: bool) {
             p.note = "끌 때 이렇게 떠요".into();
             p
         } else {
-            Plan { kind: "wait".into(), title: "MAGO".into(), note: "조금 움직여 주세요".into(), segs: vec![] }
+            Plan { kind: "wait".into(), title: "MAGO".into(), note: "조금 움직여 주세요".into(), segs: vec![], files: vec![] }
         };
     });
     let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
@@ -586,10 +637,52 @@ pub fn one(target: &str, src: &Path, dir: &Path, progress: &mut dyn FnMut(f64)) 
     }
 }
 
+/// 여러 종류 묶음 (mix.rs) — 파일마다 결과를 둘 폴더를 정해 넘긴다
+fn run_mix(paths: &[String], target: &str, s: &Settings) -> Done {
+    let mut out = Done::default();
+    let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let dirs: Vec<PathBuf> = files
+        .iter()
+        .map(|f| {
+            let dir = f.parent().map(Path::to_path_buf).unwrap_or_default();
+            match crate::outdir::ensure(&dir.to_string_lossy()) {
+                Ok(d) => PathBuf::from(d),
+                Err(_) => {
+                    let d = crate::outdir::default_base().join("확장자변경");
+                    let _ = std::fs::create_dir_all(&d);
+                    out.moved_to = d.to_string_lossy().into();
+                    d
+                }
+            }
+        })
+        .collect();
+    let total = files.len();
+    let o = crate::mix::run(target, &files, &dirs, s.quality, s.dpi, &mut |i, f| {
+        emit("qconv:progress", Prog { done: i, total, frac: f.clamp(0.0, 1.0) });
+    });
+    crate::log(&format!("[MAGO] 묶음 결과 {:?}", o.out));
+    out.made = o.made;
+    out.failed = o.failed;
+    out.first_error = o.first_error;
+    out.note = o.note;
+    out
+}
+
+/// 시험용 exe 의 `--시험바꾸기 mix-… <파일…>` (lib.rs) — 묶음 칸을 끌기 없이 한 번
+pub fn try_mix(paths: &[String], target: &str) -> String {
+    let o = run_mix(paths, target, &settings());
+    format!("만듦 {} · 실패 {} · {} {} {}", o.made, o.failed, o.note, o.first_error, o.moved_to)
+}
+
 fn run(paths: Vec<String>, target: String) {
     let s = settings();
     let total = paths.len();
     crate::log(&format!("[MAGO] {total}개 → {target}"));
+    if target.starts_with("mix-") {
+        let out = run_mix(&paths, &target, &s);
+        finish(out);
+        return;
+    }
     // 원본 폴더마다 묶어 그 폴더에 저장. 못 쓰는 폴더(읽기 전용 USB 등)면 기본 저장 폴더\확장자변경
     let mut groups: Vec<(PathBuf, Vec<String>)> = Vec::new();
     for p in paths {
@@ -691,6 +784,11 @@ fn run(paths: Vec<String>, target: String) {
         }
         base += n;
     }
+    finish(out);
+}
+
+/// 결과를 고리에 알리고 잠깐 뒤 닫는다
+fn finish(out: Done) {
     crate::log(&format!("[MAGO] 끝 — 만듦 {} · 실패 {} {}", out.made, out.failed, out.first_error));
     emit("qconv:done", out.clone());
     // 결과를 잠깐 보여 주고 닫는다 (실패면 조금 더 길게 — 이유를 읽을 시간)
@@ -758,8 +856,19 @@ fn feed(paths: Vec<String>) {
     emit("qconv:ate", a);
 }
 
+/// 탐색기가 넘겨 준 순서 → 사람이 고른 순서 (10-24 CEO "순서는 선택한 파일순서대로").
+/// 탐색기의 끌기 데이터는 **잡은 파일부터, 앞서 고른 것을 거꾸로** 돈다 — C → A → D 차례로 고르고 D 를 잡으면 [D, A, C],
+/// C 를 잡으면 [C, D, A], A 를 잡으면 [A, C, D] (10-24 확인: drop_win::tests::explorer_drag_data_order — 셸이 끌기 때 만드는 것과 같은 데이터).
+/// 그래서 **마지막에 고른 파일을 잡고 끌면** 거꾸로 뒤집은 것이 고른 순서와 같다 (Ctrl 로 하나씩 고른 뒤 그대로 끄는 흔한 경우).
+/// 다른 파일을 잡으면 고리를 한 칸 돈 순서가 된다 — 고리 위 번호 목록으로 보이니 놓기 전에 알 수 있다.
+fn picked_order(mut paths: Vec<String>) -> Vec<String> {
+    paths.reverse();
+    paths
+}
+
 /// 둥근 창이 받은 끌기 소식
 fn on_enter(paths: Vec<String>) {
+    let paths = picked_order(paths);
     let p = plan(&paths, &settings());
     ring(|r| {
         r.paths = paths;
@@ -795,6 +904,7 @@ fn on_leave() {
 
 /// 놓았다. 쓰레기통 위면 먹이고, 칸 위면 바꾸기 시작, 아니면 닫기.
 fn on_drop(paths: Vec<String>, sx: i32, sy: i32) {
+    let paths = picked_order(paths);
     let (pick, trash) = ring(|r| {
         let s = if r.scale > 0.0 { r.scale } else { 1.0 };
         if !paths.is_empty() {
@@ -974,6 +1084,67 @@ mod drop_win {
                     ILFree(Some(p));
                 }
                 ILFree(Some(folder));
+            }
+        }
+
+        /// 손으로 돌리는 확인 (10-24) — 탐색기에서 고른 순서와 끌기 데이터의 순서.
+        /// `MAGO_ORDER_DIR` 폴더를 탐색기 창에 열어 두면, 마우스 없이 셸로 C → A → D 를 차례로 고르고
+        /// 끌기 때 탐색기가 만드는 것과 같은 데이터(IShellView::GetItemObject(SVGIO_SELECTION))의 순서를 찍는다.
+        #[test]
+        #[ignore]
+        fn explorer_drag_data_order() {
+            use windows::core::Interface;
+            use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, IServiceProvider, CLSCTX_ALL};
+            use windows::Win32::System::Variant::{VARIANT, VT_I4};
+            use windows::Win32::UI::Shell::{
+                IFolderView2, IShellBrowser, IShellItem, IShellView, IShellWindows, ShellWindows, SID_STopLevelBrowser, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SVGIO_ALLVIEW,
+                SVGIO_SELECTION, SVSI_DESELECTOTHERS, SVSI_FOCUSED, SVSI_SELECT,
+            };
+            unsafe {
+                let _ = OleInitialize(None);
+                let dir = std::env::var("MAGO_ORDER_DIR").expect("MAGO_ORDER_DIR");
+                let sw: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL).unwrap();
+                let mut found: Option<(IShellView, IFolderView2)> = None;
+                for i in 0..sw.Count().unwrap() {
+                    let mut v = VARIANT::default();
+                    (*v.Anonymous.Anonymous).vt = VT_I4;
+                    (*v.Anonymous.Anonymous).Anonymous.lVal = i;
+                    let Ok(d) = sw.Item(&v) else { continue };
+                    let Ok(sp) = d.cast::<IServiceProvider>() else { continue };
+                    let Ok(b) = sp.QueryService::<IShellBrowser>(&SID_STopLevelBrowser) else { continue };
+                    let Ok(view) = b.QueryActiveShellView() else { continue };
+                    let Ok(fv) = view.cast::<IFolderView2>() else { continue };
+                    let Ok(item) = fv.GetFolder::<IShellItem>() else { continue };
+                    let Ok(p) = item.GetDisplayName(SIGDN_FILESYSPATH) else { continue };
+                    let path = p.to_string().unwrap_or_default();
+                    CoTaskMemFree(Some(p.0 as _));
+                    if path.eq_ignore_ascii_case(&dir) {
+                        found = Some((view, fv));
+                    }
+                }
+                let (view, fv) = found.expect("그 폴더를 연 탐색기 창이 있어야 한다");
+                let mut names = Vec::new();
+                for i in 0..fv.ItemCount(SVGIO_ALLVIEW).unwrap() {
+                    let it: IShellItem = fv.GetItem(i).unwrap();
+                    let p = it.GetDisplayName(SIGDN_NORMALDISPLAY).unwrap();
+                    names.push(p.to_string().unwrap());
+                    CoTaskMemFree(Some(p.0 as _));
+                }
+                let at = |c: char| names.iter().position(|n| n.starts_with(c)).unwrap() as i32;
+                let drag = || -> Vec<String> {
+                    let obj: IDataObject = view.GetItemObject(SVGIO_SELECTION).unwrap();
+                    let some = Some(obj);
+                    paths_of(Ref::from(&some)).iter().map(|p| Path::new(p).file_name().unwrap().to_string_lossy().to_string()).collect()
+                };
+                println!("보이는 순서 {names:?}");
+                fv.SelectItem(at('C'), (SVSI_SELECT.0 | SVSI_DESELECTOTHERS.0 | SVSI_FOCUSED.0) as u32).unwrap();
+                fv.SelectItem(at('A'), (SVSI_SELECT.0 | SVSI_FOCUSED.0) as u32).unwrap();
+                fv.SelectItem(at('D'), (SVSI_SELECT.0 | SVSI_FOCUSED.0) as u32).unwrap();
+                println!("C → A → D 차례로 고름 (D 를 잡음) → 끌기 데이터 {:?}", drag());
+                fv.SelectItem(at('C'), (SVSI_SELECT.0 | SVSI_FOCUSED.0) as u32).unwrap();
+                println!("같은 선택에서 C 를 잡음 → 끌기 데이터 {:?}", drag());
+                fv.SelectItem(at('A'), (SVSI_SELECT.0 | SVSI_FOCUSED.0) as u32).unwrap();
+                println!("같은 선택에서 A 를 잡음 → 끌기 데이터 {:?}", drag());
             }
         }
 
@@ -1258,6 +1429,11 @@ mod watch {
     }
 }
 
+/// 시험용 실행(lib.rs --시험바꾸기) — 끌기 감시 없이 창 만들 손잡이만 (PDF 인쇄 창이 쓴다)
+pub fn set_app(app: AppHandle) {
+    let _ = APP.set(app);
+}
+
 /// 앱이 켜질 때 한 번
 pub fn start(app: AppHandle) {
     if APP.set(app.clone()).is_err() {
@@ -1364,9 +1540,47 @@ mod tests {
         assert_eq!(p.kind, "mixed");
         assert!(p.segs.is_empty());
 
-        let p = plan(&["보고서.docx".into()], &s);
+        let p = plan(&["압축.zip".into()], &s);
         assert_eq!(p.kind, "none");
         assert!(p.segs.is_empty());
+    }
+
+    /// 10-24 CEO "jpg, txt, pdf, word, 한글파일, xlsx 를 모두 잡고 … 한장의 pdf, jpg 로 저장할건지, 쪽마다 저장할건지"
+    /// · "선택한 파일 목록이 번호랑 같이 보이게" — 여러 종류면 묶음 칸, 목록은 받은 순서 그대로
+    #[test]
+    fn mixed_kinds_get_bundle_cells_and_a_numbered_list_in_drop_order() {
+        let s = Settings::default();
+        let paths: Vec<String> = [r"C:\사진.jpg", r"C:\메모.txt", r"D:\계약.pdf", r"C:\보고서.docx", r"C:\공문.hwp", r"C:\표.xlsx"].iter().map(|s| s.to_string()).collect();
+        let p = plan(&paths, &s);
+        assert_eq!(p.kind, "mix");
+        assert_eq!(p.title, "파일 6개");
+        assert_eq!(p.segs.iter().map(|g| (g.label.as_str(), g.sub.as_str())).collect::<Vec<_>>(), [("PDF", "하나로"), ("PDF", "파일마다"), ("JPG", "한 장으로"), ("JPG", "쪽마다")]);
+        assert_eq!(p.files, ["사진.jpg", "메모.txt", "계약.pdf", "보고서.docx", "공문.hwp", "표.xlsx"], "탐색기가 준 순서 그대로");
+        assert!(p.segs[0].tip.contains("1번부터") && p.segs[0].tip.contains("Word·엑셀·한글"));
+        // 그림 + TXT 만이어도 묶음 (문서가 없으면 프로그램 안내는 없다)
+        let p = plan(&["a.png".into(), "b.txt".into()], &s);
+        assert_eq!(p.kind, "mix");
+        assert!(!p.segs[0].tip.contains("Word"));
+        // 문서 하나만 — "하나로/파일마다" 가 같아 PDF 칸 하나
+        let p = plan(&["보고서.docx".into()], &s);
+        assert_eq!(p.kind, "mix");
+        assert_eq!(p.segs.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["mix-pdf", "mix-jpg", "mix-jpgs"]);
+        assert!(p.files.is_empty(), "한 개면 목록을 띄우지 않는다");
+        // 소리는 섞지 못한다
+        let p = plan(&["a.mp3".into(), "b.jpg".into()], &s);
+        assert_eq!(p.kind, "mixed");
+        assert!(p.files.is_empty());
+        // 같은 종류는 예전 그대로 (그림끼리 · PDF 끼리) — 순서가 결과와 상관없어 목록은 없다
+        let p = plan(&["a.png".into(), "b.jpg".into()], &s);
+        assert_eq!(p.kind, "image");
+        assert!(p.files.is_empty());
+        // 탐색기 순서(잡은 것부터 거꾸로) → 고른 순서
+        assert_eq!(picked_order(vec!["D".into(), "A".into(), "C".into()]), ["C", "A", "D"]);
+        // 옛 설정(칸 없음)은 묶음 칸 전부, 모르는 값은 버린다
+        let old: Settings = serde_json::from_value(serde_json::json!({ "ver": 5 })).unwrap();
+        assert_eq!(old.clean().mix, MIX_OPTS);
+        let odd: Settings = serde_json::from_value(serde_json::json!({ "mix": ["mix-jpg", "x"], "ver": 5 })).unwrap();
+        assert_eq!(odd.clean().mix, ["mix-jpg"]);
     }
 
     #[test]

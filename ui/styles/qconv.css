@@ -90,5 +90,24 @@ body { font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif; }
 .mago .bubble.tip::before { right: -5px; top: 18px; }
 .mago .bubble.tip span { white-space: normal; word-break: keep-all; font-size: 12px; color: var(--text-dark); margin-top: 3px; }
 
+/* 끌고 있는 파일 목록 — 고리 위 빈자리 (고리 맨 위는 y 132 — 그 위에서 끝나게). 마우스는 통과 */
+.files { position: absolute; left: 50%; top: 4px; transform: translateX(-50%); max-width: 548px; padding: 6px 12px 7px; border-radius: 14px;
+  background: var(--light-card); box-shadow: 0 8px 22px rgba(20, 16, 40, .22); opacity: 0; transition: opacity .2s ease-out; pointer-events: none; }
+.files.on { opacity: 1; }
+.files .fh { font-size: 11px; font-weight: 800; color: var(--text-muted); margin-bottom: 3px; white-space: nowrap; }
+.files ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content; gap: 1px 18px; }
+.files.two ol { grid-template-columns: repeat(2, max-content); grid-template-rows: repeat(5, auto); grid-auto-flow: column; }
+.files li { display: flex; align-items: center; gap: 6px; height: 18px; font-size: 12px; font-weight: 700; color: var(--text-dark); }
+/* 이름(줄임) + 확장자(늘 보임). 한 줄이면 넓게, 두 줄이면 고리 창(560) 안에 들어가게 */
+.files .fn { display: flex; min-width: 0; max-width: 360px; }
+.files.two .fn { max-width: 222px; }
+.files .no { flex: none; width: 17px; height: 17px; border-radius: 50%; background: var(--gradient); color: #fff; font-size: 10.5px; font-weight: 800; line-height: 17px; text-align: center; }
+.files .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files .ex { flex: none; color: var(--text-muted); font-weight: 600; }
+.files li.now .nm, .files li.now .ex { color: var(--primary); }
+.files li.now .no { box-shadow: 0 0 0 3px rgba(var(--primary-rgb), .25); }
+.files li.ok .no { background: var(--success); }
+.files li.more { color: var(--text-muted); font-weight: 600; padding-left: 23px; }
+
 /* 끌던 파일 → 음식 (qconv.js throwFood) */
 .food { position: absolute; width: 44px; height: auto; pointer-events: none; }

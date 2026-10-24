@@ -73,6 +73,10 @@ encoding_rs = "0.8"
 # 글 → PDF (pdfprint.rs) — 화면 엔진(WebView2)의 'PDF 로 인쇄'. tauri(wry) 와 같은 판
 webview2-com = "0.39"
 windows-core-62 = { package = "windows-core", version = "0.62" }
+# 10-24 여러 종류를 한 PDF 로 (mix.rs) — PDF 잇기 · 그림 쪽 만들기. 기본 기능(chrono·rayon 등)은 끈다
+lopdf = { version = "0.36.0", default-features = false }
+# 10-24 Word·엑셀·한글이 없을 때 docx·xlsx·hwpx 에서 글만 꺼내기 (office.rs) — plist 가 이미 쓰는 판이라 새로 받는 것 없음
+quick-xml = "0.42"
 
 [profile.release]
 lto = true

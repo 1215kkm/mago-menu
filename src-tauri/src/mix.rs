@@ -1,0 +1,716 @@
+//! **여러 종류를 한꺼번에** (10-24 CEO "jpg, txt, pdf, word, 한글파일, xlsx 를 모두 잡고 시프트드래그하면
+//! 모두 한장의 pdf, jpg 로 저장할건지, 쪽마다 저장할건지 … 순서는 선택한 파일순서대로").
+//!
+//! 고리 칸 (ring.rs MIX_OPTS):
+//! - `mix-pdf`  : 순서대로 이은 PDF 한 파일 — 1번 파일 옆 `1번이름 외 N개.pdf`
+//! - `mix-pdfs` : 파일마다 PDF — 각 원본 옆 `이름.pdf` (이미 PDF 인 것은 그대로 둔다)
+//! - `mix-jpg`  : 순서대로 세로로 이은 JPG 한 장 — 1번 파일 옆 `1번이름 외 N개.jpg`
+//! - `mix-jpgs` : 쪽마다 JPG — 1번 파일 옆 새 폴더 `1번이름 외 N개` 에 `01_이름.jpg` · `02_보고서_1쪽.jpg` …
+//!
+//! 순서는 탐색기가 넘겨 준 순서 그대로다 (고리 위 목록의 번호와 같다).
+//! 문서(TXT · Word · 엑셀 · 한글)는 먼저 PDF 로 만들고(text.rs · office.rs), 그림은 그대로 쓴다.
+//! 한 파일이 실패해도 나머지로 만든다 — 실패한 수와 첫 이유를 돌려준다. 원본은 읽기만 한다.
+
+use crate::convert::convert::{self, unique_path, OutFormat};
+use crate::convert::ext_convert::{ONE_MAX_HEIGHT, ONE_MAX_PIXELS};
+use crate::convert::pdf_render::{self, Msg, DIP_PER_INCH};
+use image::{DynamicImage, ImageDecoder, RgbaImage};
+use lopdf::{dictionary, Document, Object, ObjectId, Stream};
+use std::path::{Path, PathBuf};
+
+/// 고리 칸 (ring.rs 설정 · settings.js 와 같아야 한다)
+pub const OPTS: &[&str] = &["mix-pdf", "mix-pdfs", "mix-jpg", "mix-jpgs"];
+
+/// A4 (pt)
+const A4: (f64, f64) = (595.28, 841.89);
+/// 그림 쪽 둘레 여백 (pt, 약 1cm)
+const MARGIN: f64 = 28.0;
+/// PDF 에 넣는 그림의 긴 변 상한 (px) — A4 를 250dpi 안팎으로 채우는 크기. 폰 사진(4000px)을 그대로 넣으면 PDF 가 너무 커진다
+const PDF_IMAGE_SIDE: u32 = 2400;
+/// 한 장으로 이을 때 그림만 있으면 폭 상한 (px)
+const ONE_IMAGE_WIDTH: u32 = 2000;
+const WHITE: [u8; 4] = [255, 255, 255, 255];
+
+#[derive(Default, Debug)]
+pub struct Outcome {
+    pub made: usize,
+    pub failed: usize,
+    pub first_error: String,
+    /// 결과 한 줄 — "6개를 PDF 12쪽으로"
+    pub note: String,
+    /// 만든 파일 · 폴더 (로그)
+    pub out: Vec<String>,
+}
+
+impl Outcome {
+    fn fail(&mut self, i: usize, e: String) {
+        self.failed += 1;
+        crate::log(&format!("[묶음] {}번 실패 — {e}", i + 1));
+        if self.first_error.is_empty() {
+            self.first_error = format!("{}번: {e}", i + 1);
+        }
+    }
+}
+
+/// 이 파일은 그대로 쓸 수 있는가 / 먼저 PDF 로 만들어야 하나
+#[derive(Clone, Debug)]
+enum Piece {
+    Image(PathBuf),
+    Pdf(PathBuf),
+}
+
+fn ext(p: &Path) -> String {
+    p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()
+}
+
+fn stem(p: &Path) -> String {
+    p.file_stem().and_then(|s| s.to_str()).unwrap_or("파일").to_string()
+}
+
+fn is_image(p: &Path) -> bool {
+    let e = ext(p);
+    convert::READABLE_EXT.contains(&e.as_str())
+}
+
+/// 묶음 이름 — "보고서 외 5개" (하나면 그 이름)
+fn bundle_name(files: &[PathBuf]) -> String {
+    let first = files.first().map(|f| stem(f)).unwrap_or_else(|| "묶음".into());
+    if files.len() > 1 { format!("{first} 외 {}개", files.len() - 1) } else { first }
+}
+
+/// 사진의 회전 정보(EXIF)를 따라 세운 그림
+fn load_image(p: &Path) -> Result<RgbaImage, String> {
+    let mut r = image::ImageReader::open(p).map_err(|e| format!("그림을 열지 못했어요: {e}"))?.with_guessed_format().map_err(|e| format!("그림 형식을 모르겠어요: {e}"))?;
+    let mut l = image::Limits::default();
+    l.max_image_width = Some(convert::MAX_SIDE);
+    l.max_image_height = Some(convert::MAX_SIDE);
+    l.max_alloc = Some(convert::MAX_ALLOC);
+    r.limits(l);
+    let mut dec = r.into_decoder().map_err(|e| format!("그림을 읽지 못했어요: {e}"))?;
+    let o = dec.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = DynamicImage::from_decoder(dec).map_err(|e| format!("그림을 읽지 못했어요(깨졌거나 너무 커요): {e}"))?;
+    img.apply_orientation(o);
+    Ok(img.to_rgba8())
+}
+
+/// 세운 뒤의 크기 (그림을 다 읽지 않고)
+fn image_size(p: &Path) -> Result<(u32, u32), String> {
+    use image::metadata::Orientation::*;
+    let r = image::ImageReader::open(p).map_err(|e| format!("그림을 열지 못했어요: {e}"))?.with_guessed_format().map_err(|e| format!("그림 형식을 모르겠어요: {e}"))?;
+    let mut dec = r.into_decoder().map_err(|e| format!("그림을 읽지 못했어요: {e}"))?;
+    let (w, h) = dec.dimensions();
+    Ok(match dec.orientation().unwrap_or(NoTransforms) {
+        Rotate90 | Rotate270 | Rotate90FlipH | Rotate270FlipH => (h, w),
+        _ => (w, h),
+    })
+}
+
+/// PDF 쪽 크기들 (DIP) — 그리지 않고 크기만 (pdf_render 가 크기를 알려 주는 첫 소식에서 멈춘다)
+fn pdf_sizes(p: &Path) -> Result<Vec<(f64, f64)>, String> {
+    const STOP: &str = "\u{1}크기만";
+    let got = std::sync::Mutex::new(Vec::new());
+    let r = pdf_render::render(p, &|d: &[(f64, f64)]| {
+        *got.lock().unwrap() = d.to_vec();
+        1.0
+    }, &mut |_| Err(STOP.into()));
+    match r {
+        Err(e) if e != STOP => Err(e),
+        _ => Ok(got.into_inner().unwrap()),
+    }
+}
+
+/// 1단계 — 파일마다 그림이나 PDF 로. 문서는 임시 폴더에 PDF 를 만든다
+fn prepare(files: &[PathBuf], tmp: &Path, out: &mut Outcome, text_only: &mut usize, progress: &mut dyn FnMut(usize, f64)) -> Vec<(usize, Piece)> {
+    let mut pieces = Vec::new();
+    for (i, f) in files.iter().enumerate() {
+        progress(i, i as f64 / files.len() as f64);
+        let e = ext(f);
+        let r = if is_image(f) {
+            Ok(Piece::Image(f.clone()))
+        } else if e == "pdf" {
+            Ok(Piece::Pdf(f.clone()))
+        } else if crate::text::TEXT_EXT.contains(&e.as_str()) {
+            crate::text::pdf(f, tmp).map(|o| Piece::Pdf(PathBuf::from(o.file)))
+        } else if crate::office::is_doc(&e) {
+            let dst = tmp.join(format!("{:03}.pdf", i + 1));
+            crate::office::to_pdf(f, &dst).map(|how| {
+                if how == crate::office::How::TextOnly {
+                    *text_only += 1;
+                }
+                Piece::Pdf(dst)
+            })
+        } else {
+            Err(format!(".{e} 는 넣을 수 없어요"))
+        };
+        match r {
+            Ok(p) => pieces.push((i, p)),
+            Err(e) => out.fail(i, e),
+        }
+    }
+    pieces
+}
+
+/// 묶음 만들기. `dirs[i]` = i 번 파일 결과를 둘 폴더 (원본 폴더, 못 쓰면 다른 곳 — ring.rs 가 정한다).
+/// `progress(지금 파일 번호, 전체 0~1)`
+pub fn run(target: &str, files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: u32, progress: &mut dyn FnMut(usize, f64)) -> Outcome {
+    let mut out = Outcome::default();
+    if files.is_empty() || dirs.len() != files.len() {
+        out.first_error = "파일이 없어요".into();
+        return out;
+    }
+    crate::log(&format!("[묶음] {target} · {}개 · 순서 {:?}", files.len(), files.iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string()).collect::<Vec<_>>()));
+    if target == "mix-pdfs" {
+        each_pdf(files, dirs, &mut out, progress);
+        return out;
+    }
+    let tmp = std::env::temp_dir().join(format!("mago-mix-{}-{}", std::process::id(), chrono::Local::now().timestamp_millis()));
+    if let Err(e) = std::fs::create_dir_all(&tmp) {
+        out.first_error = format!("임시 폴더를 만들지 못했어요: {e}");
+        return out;
+    }
+    let n = files.len();
+    let mut text_only = 0usize;
+    // 문서를 PDF 로 만드는 데 시간이 가장 많이 든다 — 진행의 앞 60%
+    let pieces = prepare(files, &tmp, &mut out, &mut text_only, &mut |i, f| progress(i, f * 0.6));
+    // 잇는 동안은 모든 파일을 마친 것으로 (목록의 ✓ 가 되돌아가지 않게)
+    let mut later = |_: usize, f: f64| progress(n, 0.6 + 0.4 * f);
+    let name = bundle_name(files);
+    let dir = &dirs[0];
+    if !pieces.is_empty() {
+        let r = match target {
+            "mix-pdf" => merge_pdf(&pieces, &unique_path(dir, &format!("{name}.pdf")), dpi, quality, n, &mut later, &mut out),
+            "mix-jpg" => one_jpg(&pieces, files, &unique_path(dir, &format!("{name}.jpg")), dpi, quality, n, &mut later, &mut out),
+            "mix-jpgs" => page_jpgs(&pieces, files, &unique_path(dir, &name), dpi, quality, n, &mut later, &mut out),
+            _ => Err(format!("모르는 칸이에요: {target}")),
+        };
+        match r {
+            Ok(note) => {
+                out.made = 1;
+                out.note = note;
+            }
+            Err(e) => {
+                out.failed = n;
+                out.first_error = e;
+            }
+        }
+    }
+    if text_only > 0 && out.made > 0 {
+        out.note = format!("{} · 문서 {text_only}개는 글만", out.note);
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    out
+}
+
+// ── PDF 하나로 ────────────────────────────────────────────────────────────────
+
+/// 그림 한 장을 쪽 하나로. `page` 가 없으면 A4(그림 모양 따라 세로 · 가로)에 여백을 두고 가운데, 있으면 그 크기(pt) 쪽에 꽉 차게
+fn add_image_page(doc: &mut Document, pages_id: ObjectId, img: &RgbaImage, page: Option<(f64, f64)>, quality: u8) -> Result<ObjectId, String> {
+    let mut img = std::borrow::Cow::Borrowed(img);
+    let long = img.width().max(img.height());
+    if page.is_none() && long > PDF_IMAGE_SIDE {
+        let k = PDF_IMAGE_SIDE as f64 / long as f64;
+        img = std::borrow::Cow::Owned(image::imageops::resize(img.as_ref(), ((img.width() as f64 * k).round() as u32).max(1), ((img.height() as f64 * k).round() as u32).max(1), image::imageops::FilterType::Lanczos3));
+    }
+    let rgb = convert::flatten_on(&img, WHITE);
+    let mut jpg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, quality.clamp(50, 100)).encode_image(&rgb).map_err(|e| format!("그림을 PDF 에 넣지 못했어요: {e}"))?;
+    let (w, h) = (rgb.width() as f64, rgb.height() as f64);
+    let (pw, ph, dw, dh) = match page {
+        Some((pw, ph)) => (pw, ph, pw, ph),
+        None => {
+            let (pw, ph) = if w > h { (A4.1, A4.0) } else { A4 };
+            // 작은 그림을 억지로 키우지 않는다 (1px = 1pt 까지)
+            let k = ((pw - 2.0 * MARGIN) / w).min((ph - 2.0 * MARGIN) / h).min(1.0);
+            (pw, ph, w * k, h * k)
+        }
+    };
+    let (x, y) = ((pw - dw) / 2.0, (ph - dh) / 2.0);
+    let im = doc.add_object(Stream::new(
+        dictionary! { "Type" => "XObject", "Subtype" => "Image", "Width" => rgb.width() as i64, "Height" => rgb.height() as i64,
+            "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "Filter" => "DCTDecode" },
+        jpg,
+    ));
+    let content = doc.add_object(Stream::new(dictionary! {}, format!("q {dw:.2} 0 0 {dh:.2} {x:.2} {y:.2} cm /Im0 Do Q").into_bytes()));
+    Ok(doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), Object::Real(pw as f32), Object::Real(ph as f32)],
+        "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => im } },
+        "Contents" => content,
+    }))
+}
+
+/// 쪽 나무에서 물려받는 값 — 쪽을 새 나무에 옮기면 끊기므로 쪽에 직접 적는다
+const INHERITED: [&[u8]; 4] = [b"MediaBox", b"CropBox", b"Resources", b"Rotate"];
+
+/// PDF 한 개의 쪽들을 `doc` 끝에 잇는다
+fn append_pdf(doc: &mut Document, pages_id: ObjectId, kids: &mut Vec<Object>, mut src: Document) -> Result<usize, String> {
+    src.renumber_objects_with(doc.max_id + 1);
+    let pages: Vec<ObjectId> = src.get_pages().into_values().collect();
+    if pages.is_empty() {
+        return Err("쪽이 하나도 없는 PDF 예요".into());
+    }
+    for &pid in &pages {
+        let mut add: Vec<(&[u8], Object)> = Vec::new();
+        for key in INHERITED {
+            if src.get_dictionary(pid).map(|d| d.has(key)).unwrap_or(true) {
+                continue;
+            }
+            let mut cur = src.get_dictionary(pid).ok().and_then(|d| d.get(b"Parent").ok()).and_then(|p| p.as_reference().ok());
+            for _ in 0..64 {
+                let Some(id) = cur else { break };
+                let Ok(d) = src.get_dictionary(id) else { break };
+                if let Ok(v) = d.get(key) {
+                    add.push((key, v.clone()));
+                    break;
+                }
+                cur = d.get(b"Parent").ok().and_then(|p| p.as_reference().ok());
+            }
+        }
+        let d = src.get_dictionary_mut(pid).map_err(|e| format!("PDF 쪽을 읽지 못했어요: {e}"))?;
+        for (k, v) in add {
+            d.set(k.to_vec(), v);
+        }
+        d.set("Parent", pages_id);
+        kids.push(Object::Reference(pid));
+    }
+    // 목차(Catalog)와 쪽 나무(Pages) 말고 다 옮긴다 — 안 쓰이게 된 것(책갈피 등)은 저장 전에 치운다
+    let mut top = doc.max_id;
+    for (id, obj) in std::mem::take(&mut src.objects) {
+        let t = match &obj {
+            Object::Dictionary(d) => d.get(b"Type").ok().and_then(|t| t.as_name().ok()).map(|n| n.to_vec()),
+            _ => None,
+        };
+        if matches!(t.as_deref(), Some(b"Catalog") | Some(b"Pages")) {
+            continue;
+        }
+        top = top.max(id.0);
+        doc.objects.insert(id, obj);
+    }
+    doc.max_id = top;
+    Ok(pages.len())
+}
+
+/// PDF 를 쪽 그림으로 그려 넣는다 — 잇기용으로 못 읽는 PDF (손상 · 특이한 암호)
+fn append_pdf_as_images(doc: &mut Document, pages_id: ObjectId, kids: &mut Vec<Object>, p: &Path, dpi: u32, quality: u8) -> Result<usize, String> {
+    let k = dpi as f64 / DIP_PER_INCH;
+    let mut n = 0;
+    let mut err = None;
+    pdf_render::render(p, &move |_| k, &mut |m| {
+        if let Msg::Page(_, img) = m {
+            // 그린 크기(px) → 원래 쪽 크기(pt): px / k = DIP, DIP × 0.75 = pt
+            let size = (img.width() as f64 / k * 0.75, img.height() as f64 / k * 0.75);
+            match add_image_page(doc, pages_id, &img, Some(size), quality) {
+                Ok(id) => {
+                    kids.push(Object::Reference(id));
+                    n += 1;
+                }
+                Err(e) => {
+                    err = Some(e.clone());
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    })
+    .map_err(|e| err.unwrap_or(e))?;
+    Ok(n)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn merge_pdf(pieces: &[(usize, Piece)], dst: &Path, dpi: u32, quality: u8, n: usize, progress: &mut dyn FnMut(usize, f64), out: &mut Outcome) -> Result<String, String> {
+    let mut doc = Document::with_version("1.7");
+    let pages_id = doc.new_object_id();
+    let mut kids: Vec<Object> = Vec::new();
+    for (i, p) in pieces {
+        progress(*i, *i as f64 / n as f64);
+        let r = match p {
+            Piece::Image(f) => load_image(f).and_then(|img| add_image_page(&mut doc, pages_id, &img, None, quality)).map(|id| {
+                kids.push(Object::Reference(id));
+                1
+            }),
+            Piece::Pdf(f) => match Document::load(f) {
+                Ok(src) if !(src.is_encrypted() && src.authenticate_password("").is_err()) => append_pdf(&mut doc, pages_id, &mut kids, src),
+                other => {
+                    crate::log(&format!("[묶음] PDF 를 그대로 잇지 못해 쪽 그림으로 넣음 — {} {:?}", f.display(), other.err()));
+                    append_pdf_as_images(&mut doc, pages_id, &mut kids, f, dpi, quality)
+                }
+            },
+        };
+        if let Err(e) = r {
+            out.fail(*i, e);
+        }
+    }
+    if kids.is_empty() {
+        return Err(if out.first_error.is_empty() { "넣을 쪽이 없어요".into() } else { out.first_error.clone() });
+    }
+    let count = kids.len();
+    doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count as i64 }));
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    doc.prune_objects();
+    doc.compress();
+    doc.save(dst).map_err(|e| {
+        let _ = std::fs::remove_file(dst);
+        format!("PDF 를 저장하지 못했어요: {e}")
+    })?;
+    out.out.push(dst.to_string_lossy().into());
+    progress(n.saturating_sub(1), 1.0);
+    Ok(format!("PDF {count}쪽"))
+}
+
+// ── JPG ──────────────────────────────────────────────────────────────────────
+
+/// 한 장으로 이을 때 각 쪽의 자리
+struct Slot {
+    piece: usize,
+    /// 그릴 크기 (px)
+    w: u32,
+    h: u32,
+}
+
+/// 쪽 크기 재기 — 그림은 원래 크기, PDF 쪽은 dpi 로 그렸을 때 크기 (px)
+fn measure(pieces: &[(usize, Piece)], dpi: u32, out: &mut Outcome) -> Vec<(usize, Vec<(f64, f64)>)> {
+    let k = dpi as f64 / DIP_PER_INCH;
+    let mut sizes = Vec::new();
+    for (j, (i, p)) in pieces.iter().enumerate() {
+        let r = match p {
+            Piece::Image(f) => image_size(f).map(|(w, h)| vec![(w as f64, h as f64)]),
+            Piece::Pdf(f) => pdf_sizes(f).map(|v| v.iter().map(|&(w, h)| (w * k, h * k)).collect()),
+        };
+        match r {
+            Ok(v) if !v.is_empty() => sizes.push((j, v)),
+            Ok(_) => out.fail(*i, "쪽이 하나도 없어요".into()),
+            Err(e) => out.fail(*i, e),
+        }
+    }
+    sizes
+}
+
+#[allow(clippy::too_many_arguments)]
+fn one_jpg(pieces: &[(usize, Piece)], _files: &[PathBuf], dst: &Path, dpi: u32, quality: u8, n: usize, progress: &mut dyn FnMut(usize, f64), out: &mut Outcome) -> Result<String, String> {
+    let sizes = measure(pieces, dpi, out);
+    if sizes.is_empty() {
+        return Err(out.first_error.clone());
+    }
+    // 폭: PDF 쪽이 있으면 가장 넓은 PDF 쪽, 그림만 있으면 가장 넓은 그림(2000px 까지). 그림은 그 폭까지 줄이고 키우지는 않는다
+    let pdf_w = sizes.iter().filter(|(j, _)| matches!(pieces[*j].1, Piece::Pdf(_))).flat_map(|(_, v)| v.iter().map(|s| s.0)).fold(0.0, f64::max);
+    let width = if pdf_w > 0.0 { pdf_w } else { sizes.iter().flat_map(|(_, v)| v.iter().map(|s| s.0)).fold(1.0, f64::max).min(ONE_IMAGE_WIDTH as f64) };
+    let scaled: Vec<(usize, Vec<(f64, f64)>)> = sizes
+        .iter()
+        .map(|(j, v)| {
+            let img = matches!(pieces[*j].1, Piece::Image(_));
+            (*j, v.iter().map(|&(w, h)| if img { let s = (width / w).min(1.0); (w * s, h * s) } else { (w, h) }).collect())
+        })
+        .collect();
+    let total_h: f64 = scaled.iter().flat_map(|(_, v)| v.iter().map(|s| s.1)).sum();
+    // 너무 길거나 크면 전체를 같은 비율로 줄인다 (ext_convert 의 PDF 한 장과 같은 상한)
+    let g = 1f64.min(ONE_MAX_HEIGHT as f64 / total_h.max(1.0)).min((ONE_MAX_PIXELS as f64 / (width * total_h).max(1.0)).sqrt());
+    let mut slots: Vec<Slot> = Vec::new();
+    for (j, v) in &scaled {
+        for &(w, h) in v {
+            slots.push(Slot { piece: *j, w: ((w * g).round() as u32).max(1), h: ((h * g).round() as u32).max(1) });
+        }
+    }
+    let cw = slots.iter().map(|s| s.w).max().unwrap_or(1);
+    let ch: u64 = slots.iter().map(|s| s.h as u64).sum();
+    let mut canvas = RgbaImage::from_pixel(cw, ch.max(1) as u32, image::Rgba(WHITE));
+    let mut y = 0i64;
+    let k = dpi as f64 / DIP_PER_INCH * g;
+    let mut si = 0usize;
+    let mut drawn = 0usize;
+    for (j, _) in &scaled {
+        let (i, p) = &pieces[*j];
+        progress(*i, *i as f64 / n as f64);
+        let mine: Vec<(u32, u32)> = slots.iter().skip(si).take_while(|s| s.piece == *j).map(|s| (s.w, s.h)).collect();
+        si += mine.len();
+        let r: Result<(), String> = match p {
+            Piece::Image(f) => load_image(f).map(|img| {
+                let (w, h) = mine[0];
+                let img = if (img.width(), img.height()) == (w, h) { img } else { image::imageops::resize(&img, w, h, image::imageops::FilterType::Lanczos3) };
+                image::imageops::overlay(&mut canvas, &img, (cw as i64 - w as i64) / 2, y);
+            }),
+            Piece::Pdf(f) => {
+                let mut pages: Vec<(u32, u32)> = Vec::new();
+                let top = y;
+                pdf_render::render(f, &move |_| k, &mut |m| {
+                    match m {
+                        Msg::Plan(pl) => pages = pl,
+                        Msg::Page(pi, img) => {
+                            let py = top + pages.iter().take(pi).map(|s| s.1 as i64).sum::<i64>();
+                            image::imageops::overlay(&mut canvas, &img, (cw as i64 - img.width() as i64) / 2, py);
+                        }
+                    }
+                    Ok(())
+                })
+                .map(|_| ())
+            }
+        };
+        match r {
+            Ok(()) => drawn += 1,
+            Err(e) => out.fail(*i, e),
+        }
+        y += mine.iter().map(|s| s.1 as i64).sum::<i64>();
+    }
+    if drawn == 0 {
+        return Err(out.first_error.clone());
+    }
+    convert::save(&canvas, dst, OutFormat::Jpg, quality, WHITE)?;
+    out.out.push(dst.to_string_lossy().into());
+    progress(n.saturating_sub(1), 1.0);
+    let mut note = format!("{}쪽을 JPG 한 장으로", slots.len());
+    if g < 0.99 {
+        note.push_str(" · 길어서 줄임");
+    }
+    Ok(note)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn page_jpgs(pieces: &[(usize, Piece)], files: &[PathBuf], folder: &Path, dpi: u32, quality: u8, n: usize, progress: &mut dyn FnMut(usize, f64), out: &mut Outcome) -> Result<String, String> {
+    let sizes = measure(pieces, dpi, out);
+    if sizes.is_empty() {
+        return Err(out.first_error.clone());
+    }
+    let total: usize = sizes.iter().map(|(_, v)| v.len()).sum();
+    let digits = total.to_string().len().max(2);
+    std::fs::create_dir_all(folder).map_err(|e| format!("폴더를 만들지 못했어요: {e}"))?;
+    let k = dpi as f64 / DIP_PER_INCH;
+    let mut seq = 0usize;
+    let mut saved = 0usize;
+    for (j, v) in &sizes {
+        let (i, p) = &pieces[*j];
+        progress(*i, *i as f64 / n as f64);
+        let name = stem(&files[*i]);
+        let r: Result<(), String> = match p {
+            Piece::Image(f) => load_image(f).and_then(|img| {
+                seq += 1;
+                convert::save(&img, &unique_path(folder, &format!("{seq:0digits$}_{name}.jpg")), OutFormat::Jpg, quality, WHITE).map(|_| saved += 1)
+            }),
+            Piece::Pdf(f) => {
+                let multi = v.len() > 1;
+                let base = seq;
+                seq += v.len();
+                pdf_render::render(f, &move |_| k, &mut |m| {
+                    if let Msg::Page(pi, img) = m {
+                        let file = if multi { format!("{:0digits$}_{name}_{}쪽.jpg", base + pi + 1, pi + 1) } else { format!("{:0digits$}_{name}.jpg", base + 1) };
+                        convert::save(&img, &unique_path(folder, &file), OutFormat::Jpg, quality, WHITE)?;
+                        saved += 1;
+                    }
+                    Ok(())
+                })
+                .map(|_| ())
+            }
+        };
+        if let Err(e) = r {
+            out.fail(*i, e);
+        }
+    }
+    if saved == 0 {
+        let _ = std::fs::remove_dir(folder);
+        return Err(out.first_error.clone());
+    }
+    out.out.push(folder.to_string_lossy().into());
+    progress(n.saturating_sub(1), 1.0);
+    Ok(format!("JPG {saved}장 · 새 폴더에"))
+}
+
+// ── 파일마다 PDF ──────────────────────────────────────────────────────────────
+
+fn each_pdf(files: &[PathBuf], dirs: &[PathBuf], out: &mut Outcome, progress: &mut dyn FnMut(usize, f64)) {
+    let n = files.len();
+    let (mut kept, mut text_only) = (0usize, 0usize);
+    for (i, f) in files.iter().enumerate() {
+        progress(i, i as f64 / n as f64);
+        let e = ext(f);
+        let dst = unique_path(&dirs[i], &format!("{}.pdf", stem(f)));
+        let r: Result<PathBuf, String> = if e == "pdf" {
+            kept += 1;
+            continue;
+        } else if is_image(f) {
+            load_image(f).and_then(|img| {
+                let mut doc = Document::with_version("1.7");
+                let pages_id = doc.new_object_id();
+                let page = add_image_page(&mut doc, pages_id, &img, None, 90)?;
+                doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }));
+                let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+                doc.trailer.set("Root", catalog);
+                doc.compress();
+                doc.save(&dst).map(|_| dst.clone()).map_err(|e| format!("PDF 를 저장하지 못했어요: {e}"))
+            })
+        } else if crate::text::TEXT_EXT.contains(&e.as_str()) {
+            crate::text::pdf(f, &dirs[i]).map(|o| PathBuf::from(o.file))
+        } else if crate::office::is_doc(&e) {
+            crate::office::to_pdf(f, &dst).map(|how| {
+                if how == crate::office::How::TextOnly {
+                    text_only += 1;
+                }
+                dst.clone()
+            })
+        } else {
+            Err(format!(".{e} 는 PDF 로 바꿀 수 없어요"))
+        };
+        match r {
+            Ok(made) => {
+                out.made += 1;
+                out.out.push(made.to_string_lossy().into());
+            }
+            Err(e) => out.fail(i, e),
+        }
+    }
+    progress(n.saturating_sub(1), 1.0);
+    let mut note = Vec::new();
+    if kept > 0 {
+        note.push(format!("PDF {kept}개는 그대로"));
+    }
+    if text_only > 0 {
+        note.push(format!("문서 {text_only}개는 글만"));
+    }
+    out.note = note.join(" · ");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("mago-mix-t-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn png(p: &Path, w: u32, h: u32, c: [u8; 4]) {
+        convert::save(&RgbaImage::from_pixel(w, h, image::Rgba(c)), p, OutFormat::Png, 90, WHITE).unwrap();
+    }
+
+    /// 그림 쪽 두 장짜리 PDF 를 만든다 (잇기 시험용 — 쪽 나무에서 MediaBox 를 물려받게)
+    fn two_page_pdf(p: &Path) {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let mut kids = Vec::new();
+        for c in [[200, 0, 0, 255], [0, 0, 200, 255]] {
+            let id = add_image_page(&mut doc, pages_id, &RgbaImage::from_pixel(40, 60, image::Rgba(c)), Some((300.0, 400.0)), 90).unwrap();
+            // MediaBox 를 쪽에서 빼서 쪽 나무로 올린다
+            doc.get_dictionary_mut(id).unwrap().remove(b"MediaBox");
+            kids.push(Object::Reference(id));
+        }
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 2,
+            "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()] }));
+        let cat = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", cat);
+        doc.save(p).unwrap();
+    }
+
+    /// 순서대로 — 그림 · PDF(2쪽) · 그림 → 4쪽, 물려받던 MediaBox 가 쪽에 남는다
+    #[test]
+    fn one_pdf_keeps_the_order_and_inherited_page_sizes() {
+        let d = tmp("pdf");
+        let a = d.join("가 사진.png");
+        png(&a, 300, 200, [255, 0, 0, 255]);
+        let b = d.join("나 문서.pdf");
+        two_page_pdf(&b);
+        let c = d.join("다 사진.png");
+        png(&c, 100, 400, [0, 255, 0, 255]);
+        let files = vec![a.clone(), b.clone(), c.clone()];
+        let dirs = vec![d.clone(); 3];
+        let mut seen = Vec::new();
+        let o = run("mix-pdf", &files, &dirs, 90, 150, &mut |i, _| seen.push(i));
+        assert_eq!((o.made, o.failed), (1, 0), "{o:?}");
+        assert_eq!(o.note, "PDF 4쪽");
+        let out = d.join("가 사진 외 2개.pdf");
+        assert_eq!(o.out, vec![out.to_string_lossy().to_string()]);
+        let m = Document::load(&out).unwrap();
+        let pages: Vec<ObjectId> = m.get_pages().into_values().collect();
+        assert_eq!(pages.len(), 4);
+        let boxes: Vec<Vec<f32>> = pages
+            .iter()
+            .map(|p| m.get_dictionary(*p).unwrap().get(b"MediaBox").unwrap().as_array().unwrap().iter().map(|v| v.as_float().unwrap()).collect())
+            .collect();
+        assert_eq!(boxes[0], vec![0.0, 0.0, A4.1 as f32, A4.0 as f32], "가로 그림은 가로 A4");
+        assert_eq!(boxes[1], vec![0.0, 0.0, 300.0, 400.0], "PDF 쪽은 제 크기 그대로");
+        assert_eq!(boxes[2], vec![0.0, 0.0, 300.0, 400.0]);
+        assert_eq!(boxes[3], vec![0.0, 0.0, A4.0 as f32, A4.1 as f32], "세로 그림은 세로 A4");
+        assert!(seen.windows(2).all(|w| w[0] <= w[1]), "진행은 1번부터 차례로: {seen:?}");
+        assert_eq!((seen[0], *seen.last().unwrap()), (0, 3), "잇는 동안은 다 마친 것으로");
+        for f in &files {
+            assert!(f.exists(), "원본은 그대로");
+        }
+    }
+
+    /// 한 장으로 — 순서대로 위에서 아래로, 그림은 폭에 맞춰 가운데
+    #[test]
+    fn one_jpg_stacks_in_order() {
+        let d = tmp("jpg");
+        let a = d.join("1.png");
+        png(&a, 200, 100, [255, 0, 0, 255]);
+        let b = d.join("2.pdf");
+        two_page_pdf(&b);
+        let c = d.join("3.png");
+        png(&c, 50, 50, [0, 200, 0, 255]);
+        let files = vec![a, b, c];
+        let o = run("mix-jpg", &files, &vec![d.clone(); 3], 95, 96, &mut |_, _| {});
+        assert_eq!((o.made, o.failed), (1, 0), "{o:?}");
+        let img = image::open(d.join("1 외 2개.jpg")).unwrap().to_rgb8();
+        // 96dpi 면 PDF 쪽(300×400pt = 400×533 DIP)은 폭 400 — 그림은 키우지 않는다
+        assert_eq!(img.width(), 400);
+        assert_eq!(img.height(), 100 + 533 * 2 + 50);
+        let px = |x: u32, y: u32| img.get_pixel(x, y).0;
+        assert!(px(200, 50)[0] > 200 && px(200, 50)[1] < 60, "맨 위는 1번(빨강)");
+        assert!((180..230).contains(&px(200, 100 + 260)[0]) && px(200, 100 + 260)[2] < 60, "그다음 PDF 1쪽(짙은 빨강)");
+        assert!(px(200, 100 + 533 + 260)[2] > 150, "PDF 2쪽(파랑)");
+        assert!(px(200, 100 + 533 * 2 + 25)[1] > 150, "맨 아래는 3번(초록), 가운데");
+        assert!(px(20, 100 + 533 * 2 + 25)[0] > 240, "좁은 그림 옆은 흰 바탕");
+    }
+
+    /// 쪽마다 — 새 폴더에 번호 순서로
+    #[test]
+    fn page_jpgs_go_into_a_new_folder_numbered_in_order() {
+        let d = tmp("jpgs");
+        let a = d.join("표지.png");
+        png(&a, 30, 30, [9, 9, 9, 255]);
+        let b = d.join("본문.pdf");
+        two_page_pdf(&b);
+        let o = run("mix-jpgs", &[a, b], &vec![d.clone(); 2], 90, 96, &mut |_, _| {});
+        assert_eq!((o.made, o.failed), (1, 0), "{o:?}");
+        let folder = d.join("표지 외 1개");
+        let mut names: Vec<String> = std::fs::read_dir(&folder).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+        names.sort();
+        assert_eq!(names, ["01_표지.jpg", "02_본문_1쪽.jpg", "03_본문_2쪽.jpg"]);
+    }
+
+    /// 파일마다 PDF — 그림은 PDF 로, PDF 는 그대로, 못 읽는 파일은 실패로 세고 나머지는 만든다
+    #[test]
+    fn each_pdf_skips_pdfs_and_counts_failures() {
+        let d = tmp("each");
+        let a = d.join("사진.png");
+        png(&a, 20, 20, [1, 2, 3, 255]);
+        let b = d.join("이미.pdf");
+        two_page_pdf(&b);
+        let c = d.join("깨진.png");
+        std::fs::write(&c, b"not a png").unwrap();
+        let o = run("mix-pdfs", &[a.clone(), b.clone(), c], &vec![d.clone(); 3], 90, 150, &mut |_, _| {});
+        assert_eq!((o.made, o.failed), (1, 1), "{o:?}");
+        assert!(o.first_error.starts_with("3번:"), "{}", o.first_error);
+        assert_eq!(o.note, "PDF 1개는 그대로");
+        assert_eq!(Document::load(d.join("사진.pdf")).unwrap().get_pages().len(), 1);
+        assert!(!d.join("이미 (2).pdf").exists(), "이미 PDF 인 것은 다시 만들지 않는다");
+    }
+
+    /// 묶음 하나가 깨져도 나머지로 만든다
+    #[test]
+    fn a_broken_file_does_not_stop_the_bundle() {
+        let d = tmp("broken");
+        let a = d.join("좋은.png");
+        png(&a, 20, 20, [1, 2, 3, 255]);
+        let b = d.join("깨진.pdf");
+        std::fs::write(&b, b"%PDF-1.4 garbage").unwrap();
+        let o = run("mix-pdf", &[a, b], &vec![d.clone(); 2], 90, 150, &mut |_, _| {});
+        assert_eq!((o.made, o.failed), (1, 1), "{o:?}");
+        assert_eq!(Document::load(d.join("좋은 외 1개.pdf")).unwrap().get_pages().len(), 1);
+    }
+
+    #[test]
+    fn bundle_names() {
+        assert_eq!(bundle_name(&[PathBuf::from("C:\\a\\보고서.docx")]), "보고서");
+        assert_eq!(bundle_name(&[PathBuf::from("C:\\a\\보고서.docx"), PathBuf::from("b.jpg"), PathBuf::from("c.txt")]), "보고서 외 2개");
+    }
+}

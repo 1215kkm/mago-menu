@@ -4,6 +4,7 @@
 //!
 //! - `ring.rs`    : 끌기 감시 · 고리 · 놓기 창 · 쓰레기통 먹이기
 //! - `actions.rs` : 정사각(SNS) · 1MB · 휴지통
+//! - `mix.rs`     : 여러 종류(그림·PDF·글·Word·엑셀·한글)를 PDF 하나 · JPG 한 장 · 쪽마다로 (`office.rs` 가 문서를 PDF 로)
 //! - `content.rs` : 숨은 메뉴 내용(관리자가 GitHub 에서 고침) · 찾은 것 · 쪽지 방 창
 //! - `updater.rs` : 프로그램 자동 업데이트
 //!
@@ -15,6 +16,8 @@ mod anim;
 mod content;
 mod convert;
 mod cutout;
+mod mix;
+mod office;
 mod outdir;
 mod pdfprint;
 mod prefs;
@@ -91,19 +94,28 @@ fn autostart_set(on: bool) -> Result<Autostart, String> {
 const AUTOSTART_DEFAULTED: &str = "autostartDefaulted";
 
 /// cargo 로 빌드한 시험용 exe 인가 (`...\target\release\mago.exe`) — 시험 실행이 대표님 PC 시작프로그램에 박히면 안 된다
-/// 시험용 exe 만: `mago.exe --시험바꾸기 <칸> <파일>` — 끌기 없이 그 칸 일을 한 번 하고 로그에 남긴 뒤 끝난다.
+/// 시험용 exe 만: `mago.exe --시험바꾸기 <칸> <파일> [파일…]` — 끌기 없이 그 칸 일을 한 번 하고 로그에 남긴 뒤 끝난다.
+/// 묶음 칸(mix-…)은 파일 여러 개를 그 순서대로 받는다.
 /// 마우스를 움직이지 않고 PDF(숨은 화면 창)·누끼까지 실제 프로그램 안에서 확인하려고 둔다. 설치한 exe 는 무시한다.
 const TRY_ARG: &str = "--시험바꾸기";
 
-fn try_one(app: tauri::AppHandle, target: String, file: String) {
-    let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-    if !is_dev_build(&exe) {
-        log("[시험] 설치한 exe 라 --시험바꾸기 를 무시함");
-        return;
-    }
+/// 시험용 exe 가 `--시험바꾸기` 로 켜졌나 — 이때는 설치해 둔 MAGO 가 떠 있어도 따로 돌고(한 번만 실행 무시),
+/// 트레이 · 끌기 감시 · 업데이트 없이 그 일만 하고 끝난다 (10-24: 대표님 PC 에 깐 MAGO 의 설정 창을 앞으로 부르던 것 고침)
+fn trying(args: &[String]) -> bool {
+    args.iter().any(|a| a == TRY_ARG) && std::env::current_exe().map(|p| is_dev_build(&p.to_string_lossy())).unwrap_or(false)
+}
+
+fn try_one(app: tauri::AppHandle, target: String, files: Vec<String>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
-        let src = std::path::PathBuf::from(&file);
+        if target.starts_with("mix-") {
+            let t = std::time::Instant::now();
+            let r = ring::try_mix(&files, &target);
+            log(&format!("[시험] {target} {}ms — {r}", t.elapsed().as_millis()));
+            app.exit(0);
+            return;
+        }
+        let src = std::path::PathBuf::from(files.first().cloned().unwrap_or_default());
         let dir = src.parent().map(|d| d.to_path_buf()).unwrap_or_default();
         let t = std::time::Instant::now();
         match ring::one(&target, &src, &dir, &mut |_| {}) {
@@ -148,14 +160,20 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
     let tray_only = args.iter().any(|a| a == run_key::TRAY_ARG);
     log(&format!("켜짐 v{} 인자={:?}", env!("CARGO_PKG_VERSION"), &args[1..]));
-    if !single::acquire() {
+    let trying = trying(&args);
+    if args.iter().any(|a| a == TRY_ARG) && !trying {
+        log("[시험] 설치한 exe 라 --시험바꾸기 를 무시함");
+    }
+    if !trying && !single::acquire() {
         log("이미 켜져 있어 그 설정 창을 앞으로 부르고 이 실행은 끝냄");
         single::focus_existing();
         return;
     }
     // 처음 켜는 사람에게는 설정 창을 보여 준다 (트레이에만 숨어 있으면 켜졌는지 모른다)
     let first_run = prefs::path().map(|p| !p.exists()).unwrap_or(true);
-    apply_autostart_default();
+    if !trying {
+        apply_autostart_default();
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -177,6 +195,12 @@ pub fn run() {
             app_quit,
         ])
         .setup(move |app| {
+            if trying {
+                ring::set_app(app.handle().clone());
+                let i = args.iter().position(|a| a == TRY_ARG).unwrap_or(0);
+                try_one(app.handle().clone(), args.get(i + 1).cloned().unwrap_or_default(), args.iter().skip(i + 2).cloned().collect());
+                return Ok(());
+            }
             let open = MenuItem::with_id(app, "open", "설정 열기", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "끝내기", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
@@ -198,9 +222,7 @@ pub fn run() {
                 .build(app)?;
             ring::start(app.handle().clone());
             updater::spawn(app.handle().clone());
-            if let Some(i) = args.iter().position(|a| a == TRY_ARG) {
-                try_one(app.handle().clone(), args.get(i + 1).cloned().unwrap_or_default(), args.get(i + 2).cloned().unwrap_or_default());
-            } else if first_run || !tray_only {
+            if first_run || !tray_only {
                 show_settings(app.handle());
             }
             Ok(())

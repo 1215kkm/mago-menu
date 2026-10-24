@@ -19,6 +19,8 @@ const GIF_SPEEDS = [{ id: 60, label: '빠르게 0.06초' }, { id: 100, label: '�
 // 고리 옆 캐릭터 (Rust ring::CHARACTERS · qconv.js CHARS 와 같게) — 버튼에 그 캐릭터 그림을 같이 보인다
 const CHARS = [{ id: 'cat', label: '검은 고양이', img: './mago/cat/idle.webp', eats: '고양이가' }, { id: 'trash', label: '쓰레기통', img: './mago/idle.webp', eats: '쓰레기통이' }];
 const PDF = [{ id: 'jpg-pages', label: 'JPG 쪽마다' }, { id: 'jpg-one', label: 'JPG 한 장으로' }, { id: 'png-pages', label: 'PNG 쪽마다' }, { id: 'png-one', label: 'PNG 한 장으로' }];
+// 여러 종류를 같이 끌었을 때 · Word · 엑셀 · 한글 (Rust ring::MIX_OPTS = mix::OPTS 와 같게)
+const MIX = [{ id: 'mix-pdf', label: 'PDF 하나로' }, { id: 'mix-pdfs', label: 'PDF 파일마다' }, { id: 'mix-jpg', label: 'JPG 한 장으로' }, { id: 'mix-jpgs', label: 'JPG 쪽마다' }];
 
 const S = { s: null, run: false, err: null, toast: null, m: null };
 const app = document.getElementById('app');
@@ -105,6 +107,7 @@ function render() {
     row('소리일 때', chips(AUDIO, s.audio, toggle('audio'))),
     row('PDF 일 때', chips(PDF, s.pdf, toggle('pdf'))),
     row('글(TXT)일 때', chips(TEXT, s.text || [], toggle('text'))),
+    row('여러 종류·문서', chips(MIX, s.mix || [], toggle('mix'))),
     row('윈도우 켤 때', seg([{ id: 'off', label: '같이 안 켜기' }, { id: 'on', label: '트레이에 같이 켜기' }], S.run ? 'on' : 'off', async (v) => {
       const want = v === 'on';
       S.run = want; render();
@@ -141,6 +144,7 @@ function render() {
       el('li', {}, ['오른쪽 아래 ', el('b', {}, [who.label]), '에게 놓으면 냠냠 먹고 윈도우 휴지통으로 보내요. 휴지통에서 되살릴 수 있어요.']),
       el('li', {}, ['그만두려면 가운데에 놓거나 Esc. 메뉴 밖 다른 폴더에 놓으면 윈도우가 평소처럼 옮겨요.']),
     ]),
+    el('p', { class: 'hint' }, ['여러 종류를 같이: 그림 · PDF · 글(TXT) · Word · 엑셀 · 한글을 한꺼번에 끌면 메뉴 위에 번호 목록이 떠요. 그 순서대로 PDF 하나 · JPG 한 장으로 잇거나, 파일마다 PDF · 쪽마다 JPG 로 만들어요. Word · 엑셀 · 한글 파일은 이 PC 에 깔린 그 프로그램을 화면에 띄우지 않고 써요 (없으면 docx · xlsx · hwpx 는 글만 옮겨요).']),
     el('p', { class: 'hint' }, ['GIF 칸: 여러 장을 같이 끌어 놓으면 이름 순서(1, 2, … 10)로 이어 움직이는 GIF 하나를 만들어요. 동작이 칸칸이 그려진 한 장을 놓으면 칸을 나눠 움직여요. 긴 변은 800px 까지 줄여요.']),
     el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 누끼(배경을 지운 투명 PNG — 처음 한 번 누끼 도구 179MB 를 받고, 사진은 PC 밖으로 나가지 않아요), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로), 글(TXT) → PDF · 한글 · Word · 엑셀(탭마다 칸).']),
   ]);

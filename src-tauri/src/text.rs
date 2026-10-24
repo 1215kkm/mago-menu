@@ -50,7 +50,7 @@ fn lines(t: &str) -> Vec<&str> {
 }
 
 /// XML 안에 넣을 글 — 특수 문자를 바꾸고, XML 에 못 넣는 제어 문자(탭 · 줄바꿈 말고)는 뺀다
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -279,7 +279,7 @@ fn hwpx_parts(t: &str) -> Vec<(&'static str, Vec<u8>, bool)> {
 // ── PDF ───────────────────────────────────────────────────────────────────
 
 /// 인쇄용 HTML — 글은 모두 이스케이프하고 스크립트는 넣지 않는다
-fn pdf_html(t: &str, title: &str) -> String {
+pub(crate) fn pdf_html(t: &str, title: &str) -> String {
     let body = esc(t).replace('"', "&quot;");
     format!(
         r#"<!doctype html><html><head><meta charset="utf-8"><title>{}</title><style>
