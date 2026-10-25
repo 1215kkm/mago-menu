@@ -1,10 +1,11 @@
 {
-  "version": 2,
-  "_설명": "MAGO 숨은 메뉴·글. 관리자가 이 파일을 고쳐 GitHub main 에 올리면, 켜져 있는 MAGO 가 6시간 안에(또는 다음에 켤 때) 받아 쓴다. version 을 하나 올려야 바뀐 것으로 본다. unlock 종류: feedTotal(캐릭터에게 먹인 횟수) · feedBatch(한 번에 먹인 파일 수) · hour(메뉴를 연 시각, from 이상 to 미만). link 는 https 만.",
+  "version": 3,
+  "_설명": "MAGO 숨은 메뉴·글. 관리자가 이 파일을 고쳐 GitHub main 에 올리면, 켜져 있는 MAGO 가 6시간 안에(또는 다음에 켤 때) 받아 쓴다. version 을 하나 올려야 바뀐 것으로 본다. unlock 종류: feedTotal(캐릭터에게 먹인 횟수) · feedBatch(한 번에 먹인 파일 수) · hour(메뉴를 연 시각, from 이상 to 미만). link 는 https 만. hint 는 못 찾은 사람에게 설정 창에서 보이는 힌트(120자까지).",
   "hidden": [
     {
       "id": "trash_note",
       "name": "고양이의 쪽지",
+      "hint": "고양이에게 밥을 여러 번 주면 쪽지를 남겨요.",
       "unlock": { "type": "feedTotal", "count": 5 },
       "reward": {
         "title": "오늘의 글",
@@ -16,6 +17,7 @@
     {
       "id": "night_owl",
       "name": "새벽 손님",
+      "hint": "모두가 잠든 새벽에 메뉴를 열어 보세요.",
       "unlock": { "type": "hour", "from": 0, "to": 5 },
       "reward": {
         "title": "새벽 손님",
@@ -25,6 +27,7 @@
     {
       "id": "big_bite",
       "name": "한입에 열 개",
+      "hint": "한입에 아주 많이 — 두 자릿수만큼 먹여 보세요.",
       "unlock": { "type": "feedBatch", "count": 10 },
       "reward": {
         "title": "왕관을 받았어요",

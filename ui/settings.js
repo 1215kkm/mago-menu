@@ -132,7 +132,9 @@ function render() {
         el('button', { type: 'button', class: 'btn', onclick: () => invoke('secret_show', { id: f.id }).catch((e) => toast(String(e), true)) }, ['다시 보기']),
       ])))
       : el('p', { class: 'hint' }, [`아직 하나도 못 찾았어요. 원형 메뉴 오른쪽 아래 ${who.label}에게 파일을 먹여 보세요.`]),
-    m.left ? el('p', { class: 'hint' }, [`못 찾은 숨은 메뉴가 ${m.left}개 더 있어요. 어떻게 여는지는 비밀이에요.`]) : null,
+    m.left ? el('p', { class: 'hint' }, [`못 찾은 숨은 메뉴가 ${m.left}개 더 있어요.${(m.hints || []).length ? ' 힌트:' : ''}`]) : null,
+    // 10-25 대표님 "숨은 미션 힌트를 설명에" — 못 찾은 것만, 찾으면 사라진다
+    m.left && (m.hints || []).length ? el('ul', { class: 'clues' }, m.hints.map((t) => el('li', {}, [t]))) : null,
   ]);
 
   const how = el('section', { class: 'card' }, [

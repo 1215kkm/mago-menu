@@ -31,6 +31,10 @@ pub struct Hidden {
     pub name: String,
     pub unlock: Unlock,
     pub reward: Reward,
+    /// 못 찾은 사람에게 설정 창에서 보여 줄 힌트 (10-25 대표님 "숨은 미션 힌트를 설명에"). 없으면 안 보인다.
+    /// 옛 판 MAGO 는 모르는 칸이라 그냥 넘긴다
+    #[serde(default)]
+    pub hint: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -79,6 +83,9 @@ fn check(c: &Content) -> Result<(), String> {
             if !l.starts_with("https://") {
                 return Err(format!("링크는 https 만 돼요: {l}"));
             }
+        }
+        if h.hint.as_ref().is_some_and(|t| t.chars().count() > 120) {
+            return Err(format!("힌트는 120자까지예요: {}", h.id));
         }
         if let Unlock::Hour { from, to } = h.unlock {
             if from > 24 || to > 24 {
@@ -234,6 +241,8 @@ pub struct State {
     total: u32,
     version: u32,
     found: Vec<Found>,
+    /// 아직 못 찾은 숨은 메뉴의 힌트 (힌트가 적힌 것만, 내용 파일 순서)
+    hints: Vec<String>,
 }
 
 #[tauri::command]
@@ -242,7 +251,8 @@ pub fn mago_state() -> State {
     let p = progress();
     let (left, total) = left();
     let found = c.hidden.iter().filter(|h| p.discovered.contains(&h.id)).map(|h| Found { id: h.id.clone(), name: h.name.clone() }).collect();
-    State { feeds: p.feeds, files: p.files, bytes: p.bytes, left, total, version: c.version, found }
+    let hints = c.hidden.iter().filter(|h| !p.discovered.contains(&h.id)).filter_map(|h| h.hint.clone()).filter(|t| !t.trim().is_empty()).collect();
+    State { feeds: p.feeds, files: p.files, bytes: p.bytes, left, total, version: c.version, found, hints }
 }
 
 /// 설정 창(content-sync.js)이 GitHub 에서 받은 content.json 을 넘긴다
@@ -301,6 +311,16 @@ mod tests {
         let c = bundled();
         check(&c).unwrap();
         assert!(c.hidden.len() >= 3);
+        // 10-25 대표님 "숨은 미션 힌트를 설명에" — 모두 힌트가 있다
+        assert!(c.hidden.iter().all(|h| h.hint.as_deref().is_some_and(|t| !t.is_empty())));
+        // 옛 내용 파일(힌트 칸 없음)도 읽히고, 너무 긴 힌트는 막는다
+        let old: Content = serde_json::from_value(serde_json::json!({ "version": 1, "hidden": [
+            { "id": "a", "name": "a", "unlock": { "type": "feedTotal", "count": 1 }, "reward": { "title": "t", "body": "b" } }
+        ]})).unwrap();
+        assert!(check(&old).is_ok() && old.hidden[0].hint.is_none());
+        let mut long = old.clone();
+        long.hidden[0].hint = Some("가".repeat(121));
+        assert!(check(&long).is_err());
     }
 
     #[test]

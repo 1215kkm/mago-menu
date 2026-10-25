@@ -2266,7 +2266,7 @@ dependencies = [
 
 [[package]]
 name = "mago"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "encoding_rs",
