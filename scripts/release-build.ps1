@@ -13,7 +13,7 @@ $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw $keyFile
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw $pwFile).Trim()
 Set-Location (Split-Path -Parent $PSScriptRoot)
 # 실행 중인 빌드 exe 는 링크를 깨뜨린다 — 빌드 폴더(target)의 것만 끈다. 이 PC 에 깔아 쓰는 MAGO 는 건드리지 않는다 (10-25)
-Get-Process mago -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\src-tauri	arget\*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process mago -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*\src-tauri\target\*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 # --features custom-protocol: 화면(ui/)을 exe 에 넣는다 (cargo build --release 단독은 Cargo.toml default 로 켜져 있지만 CLI 와 맞춘다)
 npx --yes '@tauri-apps/cli@2' build --features custom-protocol
 $code = $LASTEXITCODE
