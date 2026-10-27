@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "설정 창(settings) · 고리 창(qconv) · 쪽지 방(secret). 앱 자체 command 와 이벤트 듣기만 — 파일시스템·셸·HTTP 플러그인 없음. 링크 열기는 화면이 아니라 Rust open_link 가 내용 파일에 적힌 주소만 연다. 숨은 메뉴 내용은 고리 창이 fetch 로 raw.githubusercontent.com 에서만 받는다(CSP connect-src).",
-  "windows": ["settings", "qconv", "secret"],
+  "description": "설정 창(settings) · 고리 창(qconv) · 쪽지 방(secret) · JPG 한 장 미리 보기(sheet — 그림은 data: 주소로 받는다). 앱 자체 command 와 이벤트 듣기만 — 파일시스템·셸·HTTP 플러그인 없음. 링크 열기는 화면이 아니라 Rust open_link 가 내용 파일에 적힌 주소만 연다. 숨은 메뉴 내용은 고리 창이 fetch 로 raw.githubusercontent.com 에서만 받는다(CSP connect-src).",
+  "windows": ["settings", "qconv", "secret", "sheet"],
   "permissions": ["core:default"]
 }

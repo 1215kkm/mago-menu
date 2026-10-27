@@ -43,6 +43,20 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    /// 한 파일로 다 만든 결과를 적는다 — 실패면 모두 실패로
+    pub fn settle(&mut self, r: Result<String, String>, text_only: usize, n: usize) {
+        match r {
+            Ok(note) => {
+                self.made = 1;
+                self.note = if text_only > 0 { format!("{note} · 문서 {text_only}개는 글만") } else { note };
+            }
+            Err(e) => {
+                self.failed = n;
+                self.first_error = e;
+            }
+        }
+    }
+
     fn fail(&mut self, i: usize, e: String) {
         self.failed += 1;
         crate::log(&format!("[묶음] {}번 실패 — {e}", i + 1));
@@ -150,8 +164,25 @@ fn prepare(files: &[PathBuf], tmp: &Path, out: &mut Outcome, text_only: &mut usi
     pieces
 }
 
+/// 임시 폴더를 만들고 파일마다 그림이나 PDF 로 (진행의 앞 60%). 하나도 못 쓰면 None — 임시 폴더도 지운다
+fn gather(files: &[PathBuf], out: &mut Outcome, progress: &mut dyn FnMut(usize, f64)) -> Option<(PathBuf, Vec<(usize, Piece)>, usize)> {
+    let tmp = std::env::temp_dir().join(format!("mago-mix-{}-{}", std::process::id(), chrono::Local::now().timestamp_nanos_opt().unwrap_or_default()));
+    if let Err(e) = std::fs::create_dir_all(&tmp) {
+        out.first_error = format!("임시 폴더를 만들지 못했어요: {e}");
+        return None;
+    }
+    let mut text_only = 0usize;
+    // 문서를 PDF 로 만드는 데 시간이 가장 많이 든다 — 진행의 앞 60%
+    let pieces = prepare(files, &tmp, out, &mut text_only, &mut |i, f| progress(i, f * 0.6));
+    if pieces.is_empty() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return None;
+    }
+    Some((tmp, pieces, text_only))
+}
+
 /// 묶음 만들기. `dirs[i]` = i 번 파일 결과를 둘 폴더 (원본 폴더, 못 쓰면 다른 곳 — ring.rs 가 정한다).
-/// `progress(지금 파일 번호, 전체 0~1)`
+/// `progress(지금 파일 번호, 전체 0~1)`. JPG 한 장은 여기서는 기본 크기로 바로 저장한다 (고리에서는 sheet.rs 미리 보기를 거친다)
 pub fn run(target: &str, files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: u32, progress: &mut dyn FnMut(usize, f64)) -> Outcome {
     let mut out = Outcome::default();
     if files.is_empty() || dirs.len() != files.len() {
@@ -163,40 +194,27 @@ pub fn run(target: &str, files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: 
         each_pdf(files, dirs, &mut out, progress);
         return out;
     }
-    let tmp = std::env::temp_dir().join(format!("mago-mix-{}-{}", std::process::id(), chrono::Local::now().timestamp_millis()));
-    if let Err(e) = std::fs::create_dir_all(&tmp) {
-        out.first_error = format!("임시 폴더를 만들지 못했어요: {e}");
+    let n = files.len();
+    if target == "mix-jpg" {
+        let (sheet, mut out) = sheet(files, dirs, quality, dpi, progress);
+        if let Some(s) = sheet {
+            let dst = unique_path(&s.dir, &format!("{}.jpg", s.name));
+            let r = s.draw(&s.default_widths(), &dst, &mut |f| progress(n, 0.6 + 0.4 * f), &mut out);
+            out.settle(r, s.text_only, n);
+        }
         return out;
     }
-    let n = files.len();
-    let mut text_only = 0usize;
-    // 문서를 PDF 로 만드는 데 시간이 가장 많이 든다 — 진행의 앞 60%
-    let pieces = prepare(files, &tmp, &mut out, &mut text_only, &mut |i, f| progress(i, f * 0.6));
+    let Some((tmp, pieces, text_only)) = gather(files, &mut out, progress) else { return out };
     // 잇는 동안은 모든 파일을 마친 것으로 (목록의 ✓ 가 되돌아가지 않게)
     let mut later = |_: usize, f: f64| progress(n, 0.6 + 0.4 * f);
     let name = bundle_name(files);
     let dir = &dirs[0];
-    if !pieces.is_empty() {
-        let r = match target {
-            "mix-pdf" => merge_pdf(&pieces, &unique_path(dir, &format!("{name}.pdf")), dpi, quality, n, &mut later, &mut out),
-            "mix-jpg" => one_jpg(&pieces, files, &unique_path(dir, &format!("{name}.jpg")), dpi, quality, n, &mut later, &mut out),
-            "mix-jpgs" => page_jpgs(&pieces, files, &unique_path(dir, &name), dpi, quality, n, &mut later, &mut out),
-            _ => Err(format!("모르는 칸이에요: {target}")),
-        };
-        match r {
-            Ok(note) => {
-                out.made = 1;
-                out.note = note;
-            }
-            Err(e) => {
-                out.failed = n;
-                out.first_error = e;
-            }
-        }
-    }
-    if text_only > 0 && out.made > 0 {
-        out.note = format!("{} · 문서 {text_only}개는 글만", out.note);
-    }
+    let r = match target {
+        "mix-pdf" => merge_pdf(&pieces, &unique_path(dir, &format!("{name}.pdf")), dpi, quality, n, &mut later, &mut out),
+        "mix-jpgs" => page_jpgs(&pieces, files, &unique_path(dir, &name), dpi, quality, n, &mut later, &mut out),
+        _ => Err(format!("모르는 칸이에요: {target}")),
+    };
+    out.settle(r, text_only, n);
     let _ = std::fs::remove_dir_all(&tmp);
     out
 }
@@ -360,14 +378,6 @@ fn merge_pdf(pieces: &[(usize, Piece)], dst: &Path, dpi: u32, quality: u8, n: us
 
 // ── JPG ──────────────────────────────────────────────────────────────────────
 
-/// 한 장으로 이을 때 각 쪽의 자리
-struct Slot {
-    piece: usize,
-    /// 그릴 크기 (px)
-    w: u32,
-    h: u32,
-}
-
 /// 쪽 크기 재기 — 그림은 원래 크기, PDF 쪽은 dpi 로 그렸을 때 크기 (px)
 fn measure(pieces: &[(usize, Piece)], dpi: u32, out: &mut Outcome) -> Vec<(usize, Vec<(f64, f64)>)> {
     let k = dpi as f64 / DIP_PER_INCH;
@@ -386,82 +396,231 @@ fn measure(pieces: &[(usize, Piece)], dpi: u32, out: &mut Outcome) -> Vec<(usize
     sizes
 }
 
-#[allow(clippy::too_many_arguments)]
-fn one_jpg(pieces: &[(usize, Piece)], _files: &[PathBuf], dst: &Path, dpi: u32, quality: u8, n: usize, progress: &mut dyn FnMut(usize, f64), out: &mut Outcome) -> Result<String, String> {
-    let sizes = measure(pieces, dpi, out);
-    if sizes.is_empty() {
-        return Err(out.first_error.clone());
+/// 한 장에 들어가는 칸 하나 — 그림 한 장 또는 PDF 쪽 하나 (미리 보기 창 sheet.rs 가 그대로 화면에 넘긴다)
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Part {
+    /// 몇 번 파일인가 (0부터 — 고리 위 목록 번호보다 하나 작다)
+    pub file: usize,
+    pub name: String,
+    pub image: bool,
+    /// PDF 의 몇 쪽째 (1부터) / 모두 몇 쪽. 그림은 1 / 1
+    pub page: usize,
+    pub pages: usize,
+    /// 원래 크기 (px) — 그림은 원본, PDF 쪽은 설정한 dpi 로 그린 크기
+    pub ow: u32,
+    pub oh: u32,
+    #[serde(skip)]
+    piece: usize,
+}
+
+/// **JPG 한 장으로** 만들 준비가 된 것 — 크기를 재 두고, 고른 폭으로 그린다 (10-25 CEO "화질 떨어지면 안돼 …
+/// 완성파일 미리 보여줘 … 원본보다 커지면 화질이 떨어질수 있다 알려주고 … 원본이 너무 커도 파일폭은 넘어가면 안돼").
+/// - 파일 폭: PDF 쪽이 있으면 가장 넓은 PDF 쪽, 그림만 있으면 가장 넓은 그림(2000px 까지).
+/// - 그림은 기본이 **원본 크기**다. 키우지 않는다. 파일 폭보다 넓은 그림만 폭에 맞춰 줄인다.
+/// - 사람이 크기를 바꾸면(미리 보기 창) 파일 폭까지는 키울 수 있다 — 원본보다 크면 흐려질 수 있다고 알린다.
+/// 문서를 바꾼 임시 PDF 는 이것이 사라질 때 지운다.
+pub struct Sheet {
+    pieces: Vec<(usize, Piece)>,
+    pub parts: Vec<Part>,
+    /// 파일 폭 (px)
+    pub width: u32,
+    dpi: u32,
+    quality: u8,
+    tmp: PathBuf,
+    /// 저장할 폴더 · 이름(확장자 없이) — 1번 파일 옆 "1번이름 외 N개"
+    pub dir: PathBuf,
+    pub name: String,
+    /// 프로그램이 없어 글만 옮긴 문서 수
+    pub text_only: usize,
+}
+
+impl Drop for Sheet {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.tmp);
     }
-    // 폭: PDF 쪽이 있으면 가장 넓은 PDF 쪽, 그림만 있으면 가장 넓은 그림(2000px 까지). 그림은 그 폭까지 줄이고 키우지는 않는다
-    let pdf_w = sizes.iter().filter(|(j, _)| matches!(pieces[*j].1, Piece::Pdf(_))).flat_map(|(_, v)| v.iter().map(|s| s.0)).fold(0.0, f64::max);
-    let width = if pdf_w > 0.0 { pdf_w } else { sizes.iter().flat_map(|(_, v)| v.iter().map(|s| s.0)).fold(1.0, f64::max).min(ONE_IMAGE_WIDTH as f64) };
-    let scaled: Vec<(usize, Vec<(f64, f64)>)> = sizes
-        .iter()
-        .map(|(j, v)| {
-            let img = matches!(pieces[*j].1, Piece::Image(_));
-            (*j, v.iter().map(|&(w, h)| if img { let s = (width / w).min(1.0); (w * s, h * s) } else { (w, h) }).collect())
-        })
-        .collect();
-    let total_h: f64 = scaled.iter().flat_map(|(_, v)| v.iter().map(|s| s.1)).sum();
-    // 너무 길거나 크면 전체를 같은 비율로 줄인다 (ext_convert 의 PDF 한 장과 같은 상한)
-    let g = 1f64.min(ONE_MAX_HEIGHT as f64 / total_h.max(1.0)).min((ONE_MAX_PIXELS as f64 / (width * total_h).max(1.0)).sqrt());
-    let mut slots: Vec<Slot> = Vec::new();
-    for (j, v) in &scaled {
-        for &(w, h) in v {
-            slots.push(Slot { piece: *j, w: ((w * g).round() as u32).max(1), h: ((h * g).round() as u32).max(1) });
-        }
+}
+
+/// 그림을 (w, h) 로 — 같으면 그대로
+fn fit(img: RgbaImage, w: u32, h: u32) -> RgbaImage {
+    if (img.width(), img.height()) == (w, h) { img } else { image::imageops::resize(&img, w, h, image::imageops::FilterType::Lanczos3) }
+}
+
+impl Sheet {
+    /// 처음 보여 줄 폭 — 그림은 원본 크기(파일 폭보다 넓으면 폭에 맞춰), PDF 쪽은 제 크기
+    pub fn default_widths(&self) -> Vec<u32> {
+        self.parts.iter().map(|p| if p.image { p.ow.min(self.width) } else { p.ow }).collect()
     }
-    let cw = slots.iter().map(|s| s.w).max().unwrap_or(1);
-    let ch: u64 = slots.iter().map(|s| s.h as u64).sum();
-    let mut canvas = RgbaImage::from_pixel(cw, ch.max(1) as u32, image::Rgba(WHITE));
-    let mut y = 0i64;
-    let k = dpi as f64 / DIP_PER_INCH * g;
-    let mut si = 0usize;
-    let mut drawn = 0usize;
-    for (j, _) in &scaled {
-        let (i, p) = &pieces[*j];
-        progress(*i, *i as f64 / n as f64);
-        let mine: Vec<(u32, u32)> = slots.iter().skip(si).take_while(|s| s.piece == *j).map(|s| (s.w, s.h)).collect();
-        si += mine.len();
-        let r: Result<(), String> = match p {
-            Piece::Image(f) => load_image(f).map(|img| {
-                let (w, h) = mine[0];
-                let img = if (img.width(), img.height()) == (w, h) { img } else { image::imageops::resize(&img, w, h, image::imageops::FilterType::Lanczos3) };
-                image::imageops::overlay(&mut canvas, &img, (cw as i64 - w as i64) / 2, y);
-            }),
-            Piece::Pdf(f) => {
-                let mut pages: Vec<(u32, u32)> = Vec::new();
-                let top = y;
-                pdf_render::render(f, &move |_| k, &mut |m| {
-                    match m {
-                        Msg::Plan(pl) => pages = pl,
-                        Msg::Page(pi, img) => {
-                            let py = top + pages.iter().take(pi).map(|s| s.1 as i64).sum::<i64>();
-                            image::imageops::overlay(&mut canvas, &img, (cw as i64 - img.width() as i64) / 2, py);
-                        }
-                    }
-                    Ok(())
-                })
-                .map(|_| ())
+
+    /// 고른 폭을 지킬 선 안으로 — 그림은 1px ~ 파일 폭, PDF 쪽은 바꾸지 않는다. 모자라는 값은 기본으로
+    pub fn clamp(&self, widths: &[u32]) -> Vec<u32> {
+        let d = self.default_widths();
+        self.parts.iter().enumerate().map(|(k, p)| if p.image { widths.get(k).copied().unwrap_or(d[k]).clamp(1, self.width) } else { d[k] }).collect()
+    }
+
+    /// 칸마다 그릴 크기 · 파일 폭 · 전체를 줄인 비율. 너무 길거나 크면 전체를 같은 비율로 줄인다 (ext_convert 의 한 장과 같은 상한)
+    pub fn layout(&self, widths: &[u32]) -> (Vec<(u32, u32)>, u32, f64) {
+        let ws = self.clamp(widths);
+        let raw: Vec<(f64, f64)> = self.parts.iter().zip(&ws).map(|(p, &w)| (w as f64, w as f64 * p.oh as f64 / p.ow.max(1) as f64)).collect();
+        let total_h: f64 = raw.iter().map(|s| s.1).sum();
+        let width = self.width as f64;
+        let g = 1f64.min(ONE_MAX_HEIGHT as f64 / total_h.max(1.0)).min((ONE_MAX_PIXELS as f64 / (width * total_h).max(1.0)).sqrt());
+        let sizes = raw.iter().map(|&(w, h)| (((w * g).round() as u32).max(1), ((h * g).round() as u32).max(1))).collect();
+        (sizes, ((width * g).round() as u32).max(1), g)
+    }
+
+    /// 고른 폭으로 그려 `dst` 에 저장. 돌려주는 값은 결과 한 줄 — "7쪽을 JPG 한 장으로"
+    pub fn draw(&self, widths: &[u32], dst: &Path, progress: &mut dyn FnMut(f64), out: &mut Outcome) -> Result<String, String> {
+        let (sizes, cw, g) = self.layout(widths);
+        let ch: u64 = sizes.iter().map(|s| s.1 as u64).sum();
+        let mut canvas = RgbaImage::from_pixel(cw, ch.max(1) as u32, image::Rgba(WHITE));
+        let k = self.dpi as f64 / DIP_PER_INCH * g;
+        let n = self.pieces.len().max(1);
+        let (mut y, mut at, mut drawn) = (0i64, 0usize, 0usize);
+        for (j, (i, p)) in self.pieces.iter().enumerate() {
+            progress(j as f64 / n as f64 * 0.95);
+            let mine: Vec<(u32, u32)> = self.parts.iter().zip(&sizes).skip(at).take_while(|(pt, _)| pt.piece == j).map(|(_, s)| *s).collect();
+            if mine.is_empty() {
+                continue; // 크기를 못 재 빠진 파일
             }
-        };
-        match r {
-            Ok(()) => drawn += 1,
-            Err(e) => out.fail(*i, e),
+            at += mine.len();
+            let r: Result<(), String> = match p {
+                Piece::Image(f) => load_image(f).map(|img| {
+                    let (w, h) = mine[0];
+                    image::imageops::overlay(&mut canvas, &fit(img, w, h), (cw as i64 - w as i64) / 2, y);
+                }),
+                Piece::Pdf(f) => {
+                    let mut pages: Vec<(u32, u32)> = Vec::new();
+                    let top = y;
+                    pdf_render::render(f, &move |_| k, &mut |m| {
+                        match m {
+                            Msg::Plan(pl) => pages = pl,
+                            Msg::Page(pi, img) => {
+                                let py = top + pages.iter().take(pi).map(|s| s.1 as i64).sum::<i64>();
+                                image::imageops::overlay(&mut canvas, &img, (cw as i64 - img.width() as i64) / 2, py);
+                            }
+                        }
+                        Ok(())
+                    })
+                    .map(|_| ())
+                }
+            };
+            match r {
+                Ok(()) => drawn += 1,
+                Err(e) => out.fail(*i, e),
+            }
+            y += mine.iter().map(|s| s.1 as i64).sum::<i64>();
         }
-        y += mine.iter().map(|s| s.1 as i64).sum::<i64>();
+        if drawn == 0 {
+            return Err(out.first_error.clone());
+        }
+        progress(0.95);
+        convert::save(&canvas, dst, OutFormat::Jpg, self.quality, WHITE)?;
+        out.out.push(dst.to_string_lossy().into());
+        progress(1.0);
+        let mut note = format!("{}쪽을 JPG 한 장으로", self.parts.len());
+        if g < 0.99 {
+            note.push_str(" · 길어서 줄임");
+        }
+        Ok(note)
     }
-    if drawn == 0 {
-        return Err(out.first_error.clone());
+
+    /// 미리 보기 그림 — 칸마다 JPG(data: 주소). 파일 폭을 `tw` px 로 줄여 본 크기 (원본보다 크게는 그리지 않는다).
+    /// 못 그린 칸은 빈 글 — 화면이 회색 칸으로 보인다
+    pub fn thumbs(&self, tw: u32, progress: &mut dyn FnMut(f64)) -> Vec<String> {
+        let s = (tw as f64 / self.width.max(1) as f64).min(1.0);
+        let k = self.dpi as f64 / DIP_PER_INCH * s;
+        let mut v = vec![String::new(); self.parts.len()];
+        let n = self.pieces.len().max(1);
+        let mut at = 0usize;
+        for (j, (_, p)) in self.pieces.iter().enumerate() {
+            progress(j as f64 / n as f64);
+            let start = at;
+            let count = self.parts.iter().skip(at).take_while(|pt| pt.piece == j).count();
+            if count == 0 {
+                continue;
+            }
+            at += count;
+            match p {
+                Piece::Image(f) => {
+                    let pt = &self.parts[start];
+                    let (w, h) = (((pt.ow as f64 * s).round() as u32).max(1), ((pt.oh as f64 * s).round() as u32).max(1));
+                    if let Ok(img) = load_image(f) {
+                        v[start] = data_jpg(&fit(img, w, h));
+                    }
+                }
+                Piece::Pdf(f) => {
+                    let _ = pdf_render::render(f, &move |_| k, &mut |m| {
+                        if let Msg::Page(pi, img) = m {
+                            if pi < count {
+                                v[start + pi] = data_jpg(&img);
+                            }
+                        }
+                        Ok(())
+                    });
+                }
+            }
+        }
+        progress(1.0);
+        v
     }
-    convert::save(&canvas, dst, OutFormat::Jpg, quality, WHITE)?;
-    out.out.push(dst.to_string_lossy().into());
-    progress(n.saturating_sub(1), 1.0);
-    let mut note = format!("{}쪽을 JPG 한 장으로", slots.len());
-    if g < 0.99 {
-        note.push_str(" · 길어서 줄임");
+}
+
+/// 그림 → `data:image/jpeg;base64,…` (미리 보기 창에 바로 넣는다 — 창은 PC 의 파일을 읽지 못한다)
+fn data_jpg(img: &RgbaImage) -> String {
+    let rgb = convert::flatten_on(img, WHITE);
+    let mut jpg = Vec::new();
+    if image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 82).encode_image(&rgb).is_err() {
+        return String::new();
     }
-    Ok(note)
+    format!("data:image/jpeg;base64,{}", base64(&jpg))
+}
+
+fn base64(b: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(b.len().div_ceil(3) * 4);
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for (k, sh) in [18, 12, 6, 0].into_iter().enumerate() {
+            s.push(if k <= c.len() { A[(n >> sh & 63) as usize] as char } else { '=' });
+        }
+    }
+    s
+}
+
+/// JPG 한 장의 준비 — 문서를 PDF 로 바꾸고(진행의 앞 60%) 크기를 잰다. 다 실패하면 None
+pub fn sheet(files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: u32, progress: &mut dyn FnMut(usize, f64)) -> (Option<Sheet>, Outcome) {
+    let mut out = Outcome::default();
+    if files.is_empty() || dirs.len() != files.len() {
+        out.first_error = "파일이 없어요".into();
+        return (None, out);
+    }
+    let Some((tmp, pieces, text_only)) = gather(files, &mut out, progress) else { return (None, out) };
+    let sizes = measure(&pieces, dpi, &mut out);
+    let mut parts = Vec::new();
+    for (j, v) in &sizes {
+        let (i, p) = &pieces[*j];
+        for (pi, &(w, h)) in v.iter().enumerate() {
+            parts.push(Part {
+                file: *i,
+                name: files[*i].file_name().unwrap_or_default().to_string_lossy().into(),
+                image: matches!(p, Piece::Image(_)),
+                page: pi + 1,
+                pages: v.len(),
+                ow: (w.round() as u32).max(1),
+                oh: (h.round() as u32).max(1),
+                piece: *j,
+            });
+        }
+    }
+    let pdf_w = parts.iter().filter(|p| !p.image).map(|p| p.ow).max().unwrap_or(0);
+    let width = if pdf_w > 0 { pdf_w } else { parts.iter().map(|p| p.ow).max().unwrap_or(1).min(ONE_IMAGE_WIDTH) };
+    let sheet = Sheet { pieces, parts, width, dpi, quality, tmp, dir: dirs[0].clone(), name: bundle_name(files), text_only };
+    if sheet.parts.is_empty() {
+        out.failed = files.len();
+        return (None, out);
+    }
+    (Some(sheet), out)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -706,6 +865,47 @@ mod tests {
         let o = run("mix-pdf", &[a, b], &vec![d.clone(); 2], 90, 150, &mut |_, _| {});
         assert_eq!((o.made, o.failed), (1, 1), "{o:?}");
         assert_eq!(Document::load(d.join("좋은 외 1개.pdf")).unwrap().get_pages().len(), 1);
+    }
+
+    /// 10-25 CEO "화질 떨어지면 안돼 … 원본이 너무 커도 파일폭은 넘어가면 안돼" — 그림은 원본 크기가 기본, 넓은 것만 폭에 맞춤,
+    /// 사람이 고른 폭은 파일 폭까지만, 고른 폭대로 그린다
+    #[test]
+    fn sheet_keeps_originals_and_caps_at_the_file_width() {
+        let d = tmp("sheet");
+        let a = d.join("1.png");
+        png(&a, 50, 40, [255, 0, 0, 255]);
+        let b = d.join("2.pdf");
+        two_page_pdf(&b);
+        let c = d.join("3.png");
+        png(&c, 900, 300, [0, 0, 255, 255]);
+        let files = vec![a, b, c];
+        let (s, o) = sheet(&files, &vec![d.clone(); 3], 95, 96, &mut |_, _| {});
+        let s = s.expect("준비");
+        assert_eq!(o.failed, 0);
+        // 96dpi 면 PDF 쪽 폭 400 = 파일 폭
+        assert_eq!(s.width, 400);
+        assert_eq!(s.parts.len(), 4);
+        assert_eq!(s.default_widths(), vec![50, 400, 400, 400], "작은 그림은 원본 그대로, 넓은 그림(900)은 폭에 맞춰");
+        assert_eq!(s.clamp(&[5000, 10, 10, 0]), vec![400, 400, 400, 1], "그림은 파일 폭까지만, PDF 쪽은 바꾸지 않는다");
+        // 1번을 원본의 4배(200), 3번을 원본보다 작게(300)
+        let dst = d.join("out.jpg");
+        let mut out = Outcome::default();
+        s.draw(&[200, 0, 0, 300], &dst, &mut |_| {}, &mut out).unwrap();
+        let img = image::open(&dst).unwrap().to_rgb8();
+        assert_eq!(img.width(), 400, "파일 폭은 그대로");
+        assert_eq!(img.height(), 160 + 533 * 2 + 100);
+        assert!(img.get_pixel(200, 80)[0] > 200 && img.get_pixel(60, 80)[0] > 240 && img.get_pixel(60, 80)[1] > 240, "1번은 가운데 200 폭");
+        assert!(img.get_pixel(200, 160 + 1066 + 50)[2] > 200 && img.get_pixel(20, 160 + 1066 + 50)[1] > 240, "3번은 300 폭 가운데");
+        let thumbs = s.thumbs(200, &mut |_| {});
+        assert!(thumbs.iter().all(|t| t.starts_with("data:image/jpeg;base64,")), "미리 보기 그림 4칸");
+    }
+
+    #[test]
+    fn base64_matches_the_standard() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
     }
 
     #[test]

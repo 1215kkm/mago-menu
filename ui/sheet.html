@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<!-- MAGO JPG 한 장 미리 보기 — 고리의 [JPG 한 장으로] 를 다 만든 모습. 그대로 저장하거나 그림 크기를 바꾼 뒤 저장한다 (src-tauri/src/sheet.rs).
+     그림은 Rust 가 data: 주소로 준다 (창은 PC 의 파일을 읽지 않는다). -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAGO — JPG 한 장 미리 보기</title>
+<link rel="stylesheet" href="./vendor/pretendard/pretendardvariable.css">
+<link rel="stylesheet" href="./styles/tokens.css">
+<link rel="stylesheet" href="./styles/sheet.css">
+</head>
+<body>
+<div class="wrap">
+  <main class="stage" id="stage" aria-label="다 만든 모습">
+    <p class="zoom" id="zoom"></p>
+    <div class="paper" id="paper"></div>
+  </main>
+  <aside class="side" id="side" aria-live="polite"></aside>
+</div>
+<script type="module" src="./sheet.js"></script>
+</body>
+</html>

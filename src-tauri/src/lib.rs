@@ -5,6 +5,7 @@
 //! - `ring.rs`    : 끌기 감시 · 고리 · 놓기 창 · 쓰레기통 먹이기
 //! - `actions.rs` : 정사각(SNS) · 1MB · 휴지통
 //! - `mix.rs`     : 여러 종류(그림·PDF·글·Word·엑셀·한글)를 PDF 하나 · JPG 한 장 · 쪽마다로 (`office.rs` 가 문서를 PDF 로)
+//! - `sheet.rs`   : JPG 한 장 미리 보기 창 — 그대로 저장 · 그림 크기 조절 뒤 저장
 //! - `content.rs` : 숨은 메뉴 내용(관리자가 GitHub 에서 고침) · 찾은 것 · 쪽지 방 창
 //! - `updater.rs` : 프로그램 자동 업데이트
 //!
@@ -23,6 +24,7 @@ mod pdfprint;
 mod prefs;
 mod ring;
 mod run_key;
+mod sheet;
 mod single;
 mod text;
 mod updater;
@@ -109,9 +111,14 @@ fn try_one(app: tauri::AppHandle, target: String, files: Vec<String>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
         if target.starts_with("mix-") {
+            sheet::QUIET.store(true, std::sync::atomic::Ordering::SeqCst);
             let t = std::time::Instant::now();
             let r = ring::try_mix(&files, &target);
             log(&format!("[시험] {target} {}ms — {r}", t.elapsed().as_millis()));
+            // 미리 보기 창은 닫히고 저장이 끝날 때까지 기다린다
+            while target == "mix-jpg-view" && !sheet::idle() {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
             app.exit(0);
             return;
         }
@@ -190,6 +197,12 @@ pub fn run() {
             content::secret_show,
             content::secret_close,
             content::open_link,
+            sheet::sheet_get,
+            sheet::sheet_set,
+            sheet::sheet_save,
+            sheet::sheet_cancel,
+            sheet::sheet_reveal,
+            sheet::sheet_close,
             autostart_get,
             autostart_set,
             app_quit,
@@ -234,6 +247,7 @@ pub fn run() {
                     let _ = window.hide();
                     log("설정 창 X → 트레이로 숨김");
                 }
+                sheet::on_close(window.label());
             }
         })
         .run(tauri::generate_context!())

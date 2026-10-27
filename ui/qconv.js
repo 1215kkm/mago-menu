@@ -16,7 +16,7 @@ const T = window.__TAURI__;
 const root = document.getElementById('ring');
 let v = { shown: false, busy: false, preview: false, plan: { kind: 'wait', title: '', note: '', segs: [] }, hover: null, trash: false, left: 0, total: 0, character: 'cat' };
 let prog = null; // { done, total, frac }
-let done = null; // { made, failed, firstError, movedTo }
+let done = null; // { made, failed, firstError, movedTo, note, preview }
 let trashMsg = null; // 쓰레기통이 일할 때 가운데 글 { title, note }
 let tipOn = null; // 말풍선에 설명을 띄운 칸 번호
 
@@ -119,7 +119,12 @@ function drawHub(segs) {
   const add = (n) => n && hubEl.appendChild(n);
   add(svg('circle', { cx: C, cy: C, r: R_IN - 4, class: `hub${done ? (done.failed && !done.made ? ' bad' : ' good') : ''}` }));
   if (done) {
-    if (done.made) {
+    if (done.made && done.preview) {
+      // JPG 한 장 — 아직 저장 전. 미리 보기 창에서 그대로 저장하거나 크기를 바꾼다 (sheet.js)
+      add(svg('path', { d: `M${C - 14} ${C - 12} l10 10 l19 -20`, class: 'tick' }));
+      add(text(C, C + 13, 'ht small', '미리 보기'));
+      add(text(C, C + 27, 'hn', done.failed ? `${done.failed}개 빠짐` : '창에서 저장해요'));
+    } else if (done.made) {
       add(svg('path', { d: `M${C - 14} ${C - 12} l10 10 l19 -20`, class: 'tick' }));
       add(text(C, C + 13, 'ht small', `${done.made}개 만듦`));
       if (done.failed) add(text(C, C + 27, 'hn', `${done.failed}개 실패`));

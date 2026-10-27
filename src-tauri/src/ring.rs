@@ -442,7 +442,7 @@ fn view() -> View {
 
 /// 고리가 떠 있거나 일하는 중인가 (업데이트 설치를 미룬다) — 쪽지 방이 열려 있어도 쓰는 중
 pub fn in_use() -> bool {
-    let busy = ring(|r| r.shown || r.busy || r.secret.is_some());
+    let busy = ring(|r| r.shown || r.busy || r.secret.is_some()) || crate::sheet::waiting();
     busy || APP.get().and_then(|a| a.get_webview_window("secret")).is_some()
 }
 
@@ -618,6 +618,8 @@ struct Done {
     moved_to: String,
     /// 결과 한 줄 — "12장 움직이는 GIF"
     note: String,
+    /// 저장하지 않고 미리 보기 창을 열었다 (JPG 한 장 — sheet.rs)
+    preview: bool,
 }
 
 /// 형식 바꾸기가 아니라 파일 하나씩 따로 하는 칸 — 정사각(SNS) · 1MB · 누끼 · 글(TXT) → 문서
@@ -637,11 +639,9 @@ pub fn one(target: &str, src: &Path, dir: &Path, progress: &mut dyn FnMut(f64)) 
     }
 }
 
-/// 여러 종류 묶음 (mix.rs) — 파일마다 결과를 둘 폴더를 정해 넘긴다
-fn run_mix(paths: &[String], target: &str, s: &Settings) -> Done {
-    let mut out = Done::default();
-    let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    let dirs: Vec<PathBuf> = files
+/// 묶음 파일마다 결과를 둘 폴더 — 원본 폴더, 못 쓰면 기본 저장 폴더\확장자변경 (그때 `moved_to` 에 적는다)
+fn mix_dirs(files: &[PathBuf], moved_to: &mut String) -> Vec<PathBuf> {
+    files
         .iter()
         .map(|f| {
             let dir = f.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -650,12 +650,42 @@ fn run_mix(paths: &[String], target: &str, s: &Settings) -> Done {
                 Err(_) => {
                     let d = crate::outdir::default_base().join("확장자변경");
                     let _ = std::fs::create_dir_all(&d);
-                    out.moved_to = d.to_string_lossy().into();
+                    *moved_to = d.to_string_lossy().into();
                     d
                 }
             }
         })
-        .collect();
+        .collect()
+}
+
+/// [JPG 한 장으로] — 바로 저장하지 않고 다 만든 모습을 미리 보기 창에 (sheet.rs). 창이 없으면(시험) 그냥 저장
+fn run_sheet(paths: &[String], s: &Settings) -> Done {
+    let mut out = Done::default();
+    let Some(app) = APP.get() else { return run_mix(paths, "mix-jpg", s) };
+    let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let dirs = mix_dirs(&files, &mut out.moved_to);
+    let total = files.len();
+    crate::log(&format!("[미리 보기] JPG 한 장 · {total}개 · 순서 {:?}", files.iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string()).collect::<Vec<_>>()));
+    let (sheet, o) = crate::mix::sheet(&files, &dirs, s.quality, s.dpi, &mut |i, f| {
+        emit("qconv:progress", Prog { done: i, total, frac: f.clamp(0.0, 1.0) });
+    });
+    out.failed = o.failed;
+    out.first_error = o.first_error.clone();
+    if let Some(sh) = sheet {
+        // 미리 보기 그림 — 진행의 뒤 40%
+        let thumbs = sh.thumbs(crate::sheet::THUMB_W, &mut |f| emit("qconv:progress", Prog { done: total, total, frac: 0.6 + 0.4 * f }));
+        crate::sheet::open(app, sh, thumbs, &o);
+        out.made = 1;
+        out.preview = true;
+    }
+    out
+}
+
+/// 여러 종류 묶음 (mix.rs) — 파일마다 결과를 둘 폴더를 정해 넘긴다
+fn run_mix(paths: &[String], target: &str, s: &Settings) -> Done {
+    let mut out = Done::default();
+    let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let dirs = mix_dirs(&files, &mut out.moved_to);
     let total = files.len();
     let o = crate::mix::run(target, &files, &dirs, s.quality, s.dpi, &mut |i, f| {
         emit("qconv:progress", Prog { done: i, total, frac: f.clamp(0.0, 1.0) });
@@ -668,9 +698,9 @@ fn run_mix(paths: &[String], target: &str, s: &Settings) -> Done {
     out
 }
 
-/// 시험용 exe 의 `--시험바꾸기 mix-… <파일…>` (lib.rs) — 묶음 칸을 끌기 없이 한 번
+/// 시험용 exe 의 `--시험바꾸기 mix-… <파일…>` (lib.rs) — 묶음 칸을 끌기 없이 한 번. `mix-jpg-view` 는 미리 보기 창까지
 pub fn try_mix(paths: &[String], target: &str) -> String {
-    let o = run_mix(paths, target, &settings());
+    let o = if target == "mix-jpg-view" { run_sheet(paths, &settings()) } else { run_mix(paths, target, &settings()) };
     format!("만듦 {} · 실패 {} · {} {} {}", o.made, o.failed, o.note, o.first_error, o.moved_to)
 }
 
@@ -679,7 +709,7 @@ fn run(paths: Vec<String>, target: String) {
     let total = paths.len();
     crate::log(&format!("[MAGO] {total}개 → {target}"));
     if target.starts_with("mix-") {
-        let out = run_mix(&paths, &target, &s);
+        let out = if target == "mix-jpg" { run_sheet(&paths, &s) } else { run_mix(&paths, &target, &s) };
         finish(out);
         return;
     }
