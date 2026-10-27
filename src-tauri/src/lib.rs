@@ -118,7 +118,7 @@ fn try_one(app: tauri::AppHandle, target: String, files: Vec<String>) {
             let r = ring::try_mix(&files, &target);
             log(&format!("[시험] {target} {}ms — {r}", t.elapsed().as_millis()));
             // 미리 보기 창은 닫히고 저장이 끝날 때까지 기다린다
-            while target == "mix-jpg-view" && !sheet::idle() {
+            while target.ends_with("-view") && !sheet::idle() {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
             app.exit(0);

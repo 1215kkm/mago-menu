@@ -261,9 +261,9 @@ fn seg_of(id: &str) -> Seg {
         "cutout" => ("처음엔 도구 받기", format!("처음 한 번 누끼 도구({}MB)를 받아요. 사진은 PC 밖으로 나가지 않아요.", crate::cutout::MODEL_MB)),
         "excel" => ("탭마다 칸으로", "줄마다 한 행, 탭으로 나뉜 곳마다 한 칸이 돼요.".to_string()),
         "hwp" => ("한글 파일로", "한글(.hwpx) 파일을 만들어요. 탭은 빈칸 네 개로 바꿔요.".to_string()),
-        "mix-pdf" => ("1번부터 이어서", "위 목록의 1번부터 차례로 이어 PDF 한 파일로 만들어요. 1번 파일 옆에 저장해요.".to_string()),
+        "mix-pdf" => ("1번부터 이어서", "위 목록의 1번부터 차례로 이어 PDF 한 파일로 만들어요. 저장하기 전에 다 만든 모습을 보여 줘요.".to_string()),
         "mix-pdfs" => ("하나씩 PDF 로", "파일마다 PDF 를 하나씩 원본 옆에 만들어요. 이미 PDF 인 것은 그대로 둬요.".to_string()),
-        "mix-jpg" => ("세로로 이어서", "위 목록의 1번부터 차례로 세로로 이어 긴 JPG 한 장으로 만들어요. 1번 파일 옆에 저장해요.".to_string()),
+        "mix-jpg" => ("세로로 이어서", "위 목록의 1번부터 차례로 세로로 이어 긴 JPG 한 장으로 만들어요. 저장하기 전에 다 만든 모습을 보여 줘요.".to_string()),
         "mix-jpgs" => ("쪽마다 따로", "쪽마다 JPG 를 만들어 새 폴더에 01, 02 … 순서대로 넣어요.".to_string()),
         "web-save" => ("다운로드 폴더에", "인터넷의 그림을 받은 그대로 다운로드 폴더에 저장해요.".to_string()),
         "web-jpg" => ("JPG 로 저장", "JPG 로 바꿔 다운로드 폴더에 저장해요.".to_string()),
@@ -698,14 +698,15 @@ fn mix_dirs(files: &[PathBuf], moved_to: &mut String) -> Vec<PathBuf> {
 }
 
 /// [JPG 한 장으로] — 바로 저장하지 않고 다 만든 모습을 미리 보기 창에 (sheet.rs). 창이 없으면(시험) 그냥 저장
-fn run_sheet(paths: &[String], s: &Settings) -> Done {
+/// JPG 한 장 · PDF 하나로 — 바로 저장하지 않고 미리 보기 창 (sheet.rs)
+fn run_sheet(paths: &[String], s: &Settings, pdf: bool) -> Done {
     let mut out = Done::default();
-    let Some(app) = APP.get() else { return run_mix(paths, "mix-jpg", s) };
+    let Some(app) = APP.get() else { return run_mix(paths, if pdf { "mix-pdf" } else { "mix-jpg" }, s) };
     let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     let dirs = mix_dirs(&files, &mut out.moved_to);
     let total = files.len();
-    crate::log(&format!("[미리 보기] JPG 한 장 · {total}개 · 순서 {:?}", files.iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string()).collect::<Vec<_>>()));
-    let (sheet, o) = crate::mix::sheet(&files, &dirs, s.quality, s.dpi, &mut |i, f| {
+    crate::log(&format!("[미리 보기] {} · {total}개 · 순서 {:?}", if pdf { "PDF 하나로" } else { "JPG 한 장" }, files.iter().map(|f| f.file_name().unwrap_or_default().to_string_lossy().to_string()).collect::<Vec<_>>()));
+    let (sheet, o) = crate::mix::sheet(&files, &dirs, s.quality, s.dpi, pdf, &mut |i, f| {
         emit("qconv:progress", Prog { done: i, total, frac: f.clamp(0.0, 1.0) });
     });
     out.failed = o.failed;
@@ -739,7 +740,11 @@ fn run_mix(paths: &[String], target: &str, s: &Settings) -> Done {
 
 /// 시험용 exe 의 `--시험바꾸기 mix-… <파일…>` (lib.rs) — 묶음 칸을 끌기 없이 한 번. `mix-jpg-view` 는 미리 보기 창까지
 pub fn try_mix(paths: &[String], target: &str) -> String {
-    let o = if target == "mix-jpg-view" { run_sheet(paths, &settings()) } else { run_mix(paths, target, &settings()) };
+    let o = match target {
+        "mix-jpg-view" => run_sheet(paths, &settings(), false),
+        "mix-pdf-view" => run_sheet(paths, &settings(), true),
+        _ => run_mix(paths, target, &settings()),
+    };
     format!("만듦 {} · 실패 {} · {} {} {}", o.made, o.failed, o.note, o.first_error, o.moved_to)
 }
 
@@ -748,7 +753,11 @@ fn run(paths: Vec<String>, target: String) {
     let total = paths.len();
     crate::log(&format!("[MAGO] {total}개 → {target}"));
     if target.starts_with("mix-") {
-        let out = if target == "mix-jpg" { run_sheet(&paths, &s) } else { run_mix(&paths, &target, &s) };
+        let out = match target.as_str() {
+            "mix-jpg" => run_sheet(&paths, &s, false),
+            "mix-pdf" => run_sheet(&paths, &s, true),
+            _ => run_mix(&paths, &target, &s),
+        };
         finish(out);
         return;
     }

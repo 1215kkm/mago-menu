@@ -1,4 +1,5 @@
-//! **JPG 한 장 미리 보기** 창 (`ui/sheet.html`) — 고리의 [JPG 한 장으로] 는 바로 저장하지 않고 다 만든 모습을 먼저 보여 준다
+//! **JPG 한 장 · PDF 하나로 미리 보기** 창 (`ui/sheet.html`). PDF 하나로는 10-28 CEO "모두 진행해" 로 같은 창을 쓴다 — 칸마다 쪽 하나, 그림은 A4 쪽에.
+//! 아래는 JPG 한 장 때의 머리말 (PDF 도 같다 — "파일 폭" 대신 "A4 여백 안") — 고리의 [JPG 한 장으로] 는 바로 저장하지 않고 다 만든 모습을 먼저 보여 준다
 //! (10-25 CEO "화질 떨어지면 안돼 크기조절할 사람은 파일변형후 완성파일 미리 보여줘 그중에 이미지들은 현재가 원본크기인걸 표시해두고
 //! … 원본보다 커지면 화질이 떨어질수 있다 알려주고 그대로 저장할건지, 조절부터 할건지 선택하게 해줘 원본이 너무 커도 파일폭은 넘어가면 안돼").
 //!
@@ -58,7 +59,9 @@ pub fn open(app: &AppHandle, sheet: Sheet, thumbs: Vec<String>, prep: &Outcome) 
     if let Some(old) = old {
         save_in_background(old);
     }
+    let title = if pending(|p| p.as_ref().is_some_and(|p| p.sheet.pdf)) { "MAGO — PDF 하나로 미리 보기" } else { "MAGO — JPG 한 장 미리 보기" };
     if let Some(w) = app.get_webview_window(LABEL) {
+        let _ = w.set_title(title);
         let _ = app.emit_to(LABEL, "sheet:new", ());
         let _ = w.unminimize();
         let _ = w.show();
@@ -67,7 +70,7 @@ pub fn open(app: &AppHandle, sheet: Sheet, thumbs: Vec<String>, prep: &Outcome) 
     }
     let quiet = QUIET.load(std::sync::atomic::Ordering::SeqCst);
     let b = tauri::WebviewWindowBuilder::new(app, LABEL, tauri::WebviewUrl::App("sheet.html".into()))
-        .title("MAGO — JPG 한 장 미리 보기")
+        .title(title)
         .inner_size(1000.0, 820.0)
         .min_inner_size(520.0, 560.0)
         .focused(!quiet)
@@ -98,7 +101,7 @@ pub fn open(app: &AppHandle, sheet: Sheet, thumbs: Vec<String>, prep: &Outcome) 
 
 /// 저장할 파일 — 처음이면 1번 파일 옆(못 쓰는 폴더면 ring.rs 가 정한 다른 곳) 새 이름, 다시 저장이면 그 파일
 fn target(p: &Pending) -> PathBuf {
-    p.saved.clone().unwrap_or_else(|| crate::convert::convert::unique_path(&p.sheet.dir, &format!("{}.jpg", p.sheet.name)))
+    p.saved.clone().unwrap_or_else(|| crate::convert::convert::unique_path(&p.sheet.dir, &format!("{}.{}", p.sheet.name, if p.sheet.pdf { "pdf" } else { "jpg" })))
 }
 
 fn save_in_background(p: Pending) {
@@ -144,6 +147,8 @@ pub struct View {
     max_height: u64,
     max_pixels: u64,
     saved: Option<String>,
+    /// PDF 하나로 (칸마다 쪽 하나) — 아니면 JPG 한 장
+    pdf: bool,
 }
 
 #[tauri::command]
@@ -162,6 +167,7 @@ pub fn sheet_get() -> Result<View, String> {
             max_height: crate::convert::ext_convert::ONE_MAX_HEIGHT,
             max_pixels: crate::convert::ext_convert::ONE_MAX_PIXELS,
             saved: p.saved.as_ref().map(|s| s.to_string_lossy().to_string()),
+            pdf: p.sheet.pdf,
         })
     })
 }
@@ -185,6 +191,8 @@ pub struct Saved {
     w: u32,
     h: u64,
     bytes: u64,
+    /// 쪽 수 (PDF 하나로)
+    pages: usize,
 }
 
 /// [그대로 저장] · [이 크기로 저장] — 오래 걸릴 수 있어 따로 돌린다. 진행은 sheet:progress (0~1)
@@ -203,7 +211,7 @@ pub async fn sheet_save(app: AppHandle, widths: Vec<u32>) -> Result<Saved, Strin
         p.saved = Some(dst.clone());
         let bytes = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
         crate::log(&format!("[미리 보기] 저장 {} · {note} · 폭 {:?}", dst.display(), p.widths));
-        Ok(Saved { file: dst.to_string_lossy().into(), note, w: cw, h: sizes.iter().map(|s| s.1 as u64).sum(), bytes })
+        Ok(Saved { file: dst.to_string_lossy().into(), note, w: cw, h: sizes.iter().map(|s| s.1 as u64).sum(), bytes, pages: p.sheet.parts.len() })
     })
     .await
     .map_err(|e| format!("저장하다 멈췄어요: {e}"))?

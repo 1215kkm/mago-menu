@@ -196,7 +196,7 @@ pub fn run(target: &str, files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: 
     }
     let n = files.len();
     if target == "mix-jpg" {
-        let (sheet, mut out) = sheet(files, dirs, quality, dpi, progress);
+        let (sheet, mut out) = sheet(files, dirs, quality, dpi, false, progress);
         if let Some(s) = sheet {
             let dst = unique_path(&s.dir, &format!("{}.jpg", s.name));
             let r = s.draw(&s.default_widths(), &dst, &mut |f| progress(n, 0.6 + 0.4 * f), &mut out);
@@ -210,7 +210,7 @@ pub fn run(target: &str, files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: 
     let name = bundle_name(files);
     let dir = &dirs[0];
     let r = match target {
-        "mix-pdf" => merge_pdf(&pieces, &unique_path(dir, &format!("{name}.pdf")), dpi, quality, n, &mut later, &mut out),
+        "mix-pdf" => merge_pdf(&pieces, &unique_path(dir, &format!("{name}.pdf")), dpi, quality, n, &|_| None, &mut later, &mut out),
         "mix-jpgs" => page_jpgs(&pieces, files, &unique_path(dir, &name), dpi, quality, n, &mut later, &mut out),
         _ => Err(format!("모르는 칸이에요: {target}")),
     };
@@ -221,8 +221,21 @@ pub fn run(target: &str, files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: 
 
 // ── PDF 하나로 ────────────────────────────────────────────────────────────────
 
-/// 그림 한 장을 쪽 하나로. `page` 가 없으면 A4(그림 모양 따라 세로 · 가로)에 여백을 두고 가운데, 있으면 그 크기(pt) 쪽에 꽉 차게
-fn add_image_page(doc: &mut Document, pages_id: ObjectId, img: &RgbaImage, page: Option<(f64, f64)>, quality: u8) -> Result<ObjectId, String> {
+/// 그림이 들어갈 A4 쪽 (pt) — 가로로 긴 그림은 가로 쪽
+fn a4_for(w: f64, h: f64) -> (f64, f64) {
+    if w > h { (A4.1, A4.0) } else { A4 }
+}
+
+/// A4 쪽 여백 안에 들어가는 그림 폭의 상한 (pt) — 그림 (w, h) px
+fn a4_max_width(w: f64, h: f64) -> f64 {
+    let (pw, ph) = a4_for(w, h);
+    (pw - 2.0 * MARGIN).min((ph - 2.0 * MARGIN) * w / h.max(1.0))
+}
+
+/// 그림 한 장을 쪽 하나로. `page` 가 없으면 A4(그림 모양 따라 세로 · 가로)에 여백을 두고 가운데, 있으면 그 크기(pt) 쪽에 꽉 차게.
+/// `width` 는 A4 쪽에 그릴 그림 폭(pt) — 미리 보기 창에서 고른 것 (없으면 1px = 1pt, 여백 안에 들어가게)
+fn add_image_page(doc: &mut Document, pages_id: ObjectId, img: &RgbaImage, page: Option<(f64, f64)>, width: Option<f64>, quality: u8) -> Result<ObjectId, String> {
+    let (ow, oh) = (img.width() as f64, img.height() as f64);
     let mut img = std::borrow::Cow::Borrowed(img);
     let long = img.width().max(img.height());
     if page.is_none() && long > PDF_IMAGE_SIDE {
@@ -236,10 +249,10 @@ fn add_image_page(doc: &mut Document, pages_id: ObjectId, img: &RgbaImage, page:
     let (pw, ph, dw, dh) = match page {
         Some((pw, ph)) => (pw, ph, pw, ph),
         None => {
-            let (pw, ph) = if w > h { (A4.1, A4.0) } else { A4 };
-            // 작은 그림을 억지로 키우지 않는다 (1px = 1pt 까지)
-            let k = ((pw - 2.0 * MARGIN) / w).min((ph - 2.0 * MARGIN) / h).min(1.0);
-            (pw, ph, w * k, h * k)
+            let (pw, ph) = a4_for(w, h);
+            // 작은 그림을 억지로 키우지 않는다 (1px = 1pt 까지). 고른 폭이 있으면 그대로 — 여백 안까지만
+            let dw = width.unwrap_or(ow).clamp(1.0, a4_max_width(ow, oh));
+            (pw, ph, dw, dw * h / w)
         }
     };
     let (x, y) = ((pw - dw) / 2.0, (ph - dh) / 2.0);
@@ -317,7 +330,7 @@ fn append_pdf_as_images(doc: &mut Document, pages_id: ObjectId, kids: &mut Vec<O
         if let Msg::Page(_, img) = m {
             // 그린 크기(px) → 원래 쪽 크기(pt): px / k = DIP, DIP × 0.75 = pt
             let size = (img.width() as f64 / k * 0.75, img.height() as f64 / k * 0.75);
-            match add_image_page(doc, pages_id, &img, Some(size), quality) {
+            match add_image_page(doc, pages_id, &img, Some(size), None, quality) {
                 Ok(id) => {
                     kids.push(Object::Reference(id));
                     n += 1;
@@ -335,14 +348,16 @@ fn append_pdf_as_images(doc: &mut Document, pages_id: ObjectId, kids: &mut Vec<O
 }
 
 #[allow(clippy::too_many_arguments)]
-fn merge_pdf(pieces: &[(usize, Piece)], dst: &Path, dpi: u32, quality: u8, n: usize, progress: &mut dyn FnMut(usize, f64), out: &mut Outcome) -> Result<String, String> {
+/// `width(j)` = j 번째 조각이 그림일 때 A4 쪽에 그릴 폭(pt) — 미리 보기 창에서 고른 것 (없으면 기본)
+#[allow(clippy::too_many_arguments)]
+fn merge_pdf(pieces: &[(usize, Piece)], dst: &Path, dpi: u32, quality: u8, n: usize, width: &dyn Fn(usize) -> Option<f64>, progress: &mut dyn FnMut(usize, f64), out: &mut Outcome) -> Result<String, String> {
     let mut doc = Document::with_version("1.7");
     let pages_id = doc.new_object_id();
     let mut kids: Vec<Object> = Vec::new();
-    for (i, p) in pieces {
+    for (j, (i, p)) in pieces.iter().enumerate() {
         progress(*i, *i as f64 / n as f64);
         let r = match p {
-            Piece::Image(f) => load_image(f).and_then(|img| add_image_page(&mut doc, pages_id, &img, None, quality)).map(|id| {
+            Piece::Image(f) => load_image(f).and_then(|img| add_image_page(&mut doc, pages_id, &img, None, width(j), quality)).map(|id| {
                 kids.push(Object::Reference(id));
                 1
             }),
@@ -410,6 +425,11 @@ pub struct Part {
     /// 원래 크기 (px) — 그림은 원본, PDF 쪽은 설정한 dpi 로 그린 크기
     pub ow: u32,
     pub oh: u32,
+    /// 이 칸이 놓이는 바탕의 폭 · 높이 — JPG 한 장은 파일 폭(px), PDF 하나로는 그 쪽(pt, A4 · 문서 쪽 그대로)
+    pub pw: f64,
+    pub ph: f64,
+    /// 그림 폭의 상한 — JPG 는 파일 폭, PDF 는 A4 여백 안
+    pub max: u32,
     #[serde(skip)]
     piece: usize,
 }
@@ -433,6 +453,8 @@ pub struct Sheet {
     pub name: String,
     /// 프로그램이 없어 글만 옮긴 문서 수
     pub text_only: usize,
+    /// **PDF 하나로** 미리 보기 (10-28) — 칸마다 쪽 하나, 그림은 A4 쪽에 고른 폭(pt)으로. 아니면 JPG 한 장
+    pub pdf: bool,
 }
 
 impl Drop for Sheet {
@@ -449,13 +471,13 @@ fn fit(img: RgbaImage, w: u32, h: u32) -> RgbaImage {
 impl Sheet {
     /// 처음 보여 줄 폭 — 그림은 원본 크기(파일 폭보다 넓으면 폭에 맞춰), PDF 쪽은 제 크기
     pub fn default_widths(&self) -> Vec<u32> {
-        self.parts.iter().map(|p| if p.image { p.ow.min(self.width) } else { p.ow }).collect()
+        self.parts.iter().map(|p| if p.image { p.ow.min(p.max) } else if self.pdf { p.pw.round() as u32 } else { p.ow }).collect()
     }
 
     /// 고른 폭을 지킬 선 안으로 — 그림은 1px ~ 파일 폭, PDF 쪽은 바꾸지 않는다. 모자라는 값은 기본으로
     pub fn clamp(&self, widths: &[u32]) -> Vec<u32> {
         let d = self.default_widths();
-        self.parts.iter().enumerate().map(|(k, p)| if p.image { widths.get(k).copied().unwrap_or(d[k]).clamp(1, self.width) } else { d[k] }).collect()
+        self.parts.iter().enumerate().map(|(k, p)| if p.image { widths.get(k).copied().unwrap_or(d[k]).clamp(1, p.max) } else { d[k] }).collect()
     }
 
     /// 칸마다 그릴 크기 · 파일 폭 · 전체를 줄인 비율. 너무 길거나 크면 전체를 같은 비율로 줄인다 (ext_convert 의 한 장과 같은 상한)
@@ -469,8 +491,14 @@ impl Sheet {
         (sizes, ((width * g).round() as u32).max(1), g)
     }
 
-    /// 고른 폭으로 그려 `dst` 에 저장. 돌려주는 값은 결과 한 줄 — "7쪽을 JPG 한 장으로"
+    /// 고른 폭으로 그려 `dst` 에 저장. 돌려주는 값은 결과 한 줄 — "7쪽을 JPG 한 장으로" · "PDF 7쪽"
     pub fn draw(&self, widths: &[u32], dst: &Path, progress: &mut dyn FnMut(f64), out: &mut Outcome) -> Result<String, String> {
+        if self.pdf {
+            let ws = self.clamp(widths);
+            let by_piece = |j: usize| self.parts.iter().zip(&ws).find(|(p, _)| p.piece == j && p.image).map(|(_, &w)| w as f64);
+            let n = self.pieces.len().max(1);
+            return merge_pdf(&self.pieces, dst, self.dpi, self.quality, n, &by_piece, &mut |i, _| progress(i as f64 / n as f64), out);
+        }
         let (sizes, cw, g) = self.layout(widths);
         let ch: u64 = sizes.iter().map(|s| s.1 as u64).sum();
         let mut canvas = RgbaImage::from_pixel(cw, ch.max(1) as u32, image::Rgba(WHITE));
@@ -544,6 +572,8 @@ impl Sheet {
             match p {
                 Piece::Image(f) => {
                     let pt = &self.parts[start];
+                    // PDF 하나로는 쪽마다 따로 보이니 그림마다 tw 까지 (원본보다 크게는 안 그린다)
+                    let s = if self.pdf { (tw as f64 / pt.ow.max(1) as f64).min(1.0) } else { s };
                     let (w, h) = (((pt.ow as f64 * s).round() as u32).max(1), ((pt.oh as f64 * s).round() as u32).max(1));
                     if let Ok(img) = load_image(f) {
                         v[start] = data_jpg(&fit(img, w, h));
@@ -588,8 +618,8 @@ fn base64(b: &[u8]) -> String {
     s
 }
 
-/// JPG 한 장의 준비 — 문서를 PDF 로 바꾸고(진행의 앞 60%) 크기를 잰다. 다 실패하면 None
-pub fn sheet(files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: u32, progress: &mut dyn FnMut(usize, f64)) -> (Option<Sheet>, Outcome) {
+/// JPG 한 장 · PDF 하나로(`pdf`) 의 준비 — 문서를 PDF 로 바꾸고(진행의 앞 60%) 크기를 잰다. 다 실패하면 None
+pub fn sheet(files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: u32, pdf: bool, progress: &mut dyn FnMut(usize, f64)) -> (Option<Sheet>, Outcome) {
     let mut out = Outcome::default();
     if files.is_empty() || dirs.len() != files.len() {
         out.first_error = "파일이 없어요".into();
@@ -609,13 +639,28 @@ pub fn sheet(files: &[PathBuf], dirs: &[PathBuf], quality: u8, dpi: u32, progres
                 pages: v.len(),
                 ow: (w.round() as u32).max(1),
                 oh: (h.round() as u32).max(1),
+                pw: 0.0,
+                ph: 0.0,
+                max: 0,
                 piece: *j,
             });
         }
     }
     let pdf_w = parts.iter().filter(|p| !p.image).map(|p| p.ow).max().unwrap_or(0);
     let width = if pdf_w > 0 { pdf_w } else { parts.iter().map(|p| p.ow).max().unwrap_or(1).min(ONE_IMAGE_WIDTH) };
-    let sheet = Sheet { pieces, parts, width, dpi, quality, tmp, dir: dirs[0].clone(), name: bundle_name(files), text_only };
+    for p in &mut parts {
+        if !pdf {
+            (p.pw, p.max) = (width as f64, width);
+        } else if p.image {
+            (p.pw, p.ph) = a4_for(p.ow as f64, p.oh as f64);
+            p.max = a4_max_width(p.ow as f64, p.oh as f64).floor() as u32;
+        } else {
+            // 문서 쪽은 그 크기 그대로 (그린 px → pt)
+            let k = 72.0 / dpi as f64;
+            (p.pw, p.ph, p.max) = (p.ow as f64 * k, p.oh as f64 * k, p.ow);
+        }
+    }
+    let sheet = Sheet { pieces, parts, width, dpi, quality, tmp, dir: dirs[0].clone(), name: bundle_name(files), text_only, pdf };
     if sheet.parts.is_empty() {
         out.failed = files.len();
         return (None, out);
@@ -688,7 +733,7 @@ fn each_pdf(files: &[PathBuf], dirs: &[PathBuf], out: &mut Outcome, progress: &m
             load_image(f).and_then(|img| {
                 let mut doc = Document::with_version("1.7");
                 let pages_id = doc.new_object_id();
-                let page = add_image_page(&mut doc, pages_id, &img, None, 90)?;
+                let page = add_image_page(&mut doc, pages_id, &img, None, None, 90)?;
                 doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }));
                 let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
                 doc.trailer.set("Root", catalog);
@@ -747,7 +792,7 @@ mod tests {
         let pages_id = doc.new_object_id();
         let mut kids = Vec::new();
         for c in [[200, 0, 0, 255], [0, 0, 200, 255]] {
-            let id = add_image_page(&mut doc, pages_id, &RgbaImage::from_pixel(40, 60, image::Rgba(c)), Some((300.0, 400.0)), 90).unwrap();
+            let id = add_image_page(&mut doc, pages_id, &RgbaImage::from_pixel(40, 60, image::Rgba(c)), Some((300.0, 400.0)), None, 90).unwrap();
             // MediaBox 를 쪽에서 빼서 쪽 나무로 올린다
             doc.get_dictionary_mut(id).unwrap().remove(b"MediaBox");
             kids.push(Object::Reference(id));
@@ -879,7 +924,7 @@ mod tests {
         let c = d.join("3.png");
         png(&c, 900, 300, [0, 0, 255, 255]);
         let files = vec![a, b, c];
-        let (s, o) = sheet(&files, &vec![d.clone(); 3], 95, 96, &mut |_, _| {});
+        let (s, o) = sheet(&files, &vec![d.clone(); 3], 95, 96, false, &mut |_, _| {});
         let s = s.expect("준비");
         assert_eq!(o.failed, 0);
         // 96dpi 면 PDF 쪽 폭 400 = 파일 폭
@@ -898,6 +943,39 @@ mod tests {
         assert!(img.get_pixel(200, 160 + 1066 + 50)[2] > 200 && img.get_pixel(20, 160 + 1066 + 50)[1] > 240, "3번은 300 폭 가운데");
         let thumbs = s.thumbs(200, &mut |_| {});
         assert!(thumbs.iter().all(|t| t.starts_with("data:image/jpeg;base64,")), "미리 보기 그림 4칸");
+    }
+
+    /// 10-28 CEO "모두 진행해" — PDF 하나로도 미리 보기 · 그림 크기 조절. 그림은 A4 쪽에 원본 크기(1px = 1pt)가 기본, 여백 안까지만 키운다
+    #[test]
+    fn pdf_sheet_sizes_pictures_on_a4_pages() {
+        let d = tmp("pdfsheet");
+        let a = d.join("1.png");
+        png(&a, 80, 100, [255, 0, 0, 255]);
+        let b = d.join("2.pdf");
+        two_page_pdf(&b);
+        let c = d.join("3.png");
+        png(&c, 3000, 1000, [0, 0, 255, 255]);
+        let files = vec![a, b, c];
+        let (s, o) = sheet(&files, &vec![d.clone(); 3], 95, 96, true, &mut |_, _| {});
+        let s = s.expect("준비");
+        assert_eq!(o.failed, 0);
+        assert!(s.pdf);
+        let p = &s.parts;
+        assert_eq!((p[0].pw.round(), p[0].ph.round(), p[0].max), (595.0, 842.0, 539), "작은 그림은 세로 A4");
+        assert_eq!((p[3].pw.round(), p[3].max), (842.0, 785), "가로로 긴 그림은 가로 A4 · 여백 안 폭");
+        assert_eq!(s.default_widths(), vec![80, 300, 300, 785], "작은 그림은 원본 크기, 넓은 그림은 쪽에 맞춰, 문서 쪽은 제 크기(pt)");
+        assert_eq!(s.clamp(&[9999, 1, 1, 9999]), vec![539, 300, 300, 785], "여백 밖으로는 안 키운다");
+        let dst = d.join("out.pdf");
+        let mut out = Outcome::default();
+        assert_eq!(s.draw(&[400, 0, 0, 500], &dst, &mut |_| {}, &mut out).unwrap(), "PDF 4쪽");
+        let doc = Document::load(&dst).unwrap();
+        let pages: Vec<ObjectId> = doc.get_pages().into_values().collect();
+        assert_eq!(pages.len(), 4);
+        let content = String::from_utf8(doc.get_page_content(pages[0]).unwrap()).unwrap();
+        assert!(content.starts_with("q 400.00 0 0 500.00 "), "1번 그림은 고른 폭 400pt · 비율 그대로: {content}");
+        let last = String::from_utf8(doc.get_page_content(pages[3]).unwrap()).unwrap();
+        assert!(last.starts_with("q 500.00 0 0 166.67 "), "{last}");
+        assert!(s.thumbs(200, &mut |_| {}).iter().all(|t| t.starts_with("data:image/jpeg")));
     }
 
     #[test]
