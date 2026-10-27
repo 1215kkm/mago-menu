@@ -43,6 +43,8 @@ windows = { version = "0.61", features = [
   "Win32_UI_Shell_Common",
   # 10-20 누끼 (cutout.rs) — 윈도우에 들어 있는 기계 학습 엔진(Windows ML)으로 이 PC 에서 배경 지우기
   "AI_MachineLearning", "Foundation_Collections",
+  # 10-28 브라우저 끌기 데이터 읽기 (ring.rs drop_win) — 주소·그림 형식 이름(RegisterClipboardFormatW) · 내용(GlobalLock)
+  "Win32_System_DataExchange", "Win32_System_Memory",
 ] }
 # 놓기 창의 IDropTarget 을 만드는 #[implement] 매크로가 `windows_core` 이름으로 찾는다 (wry 와 같은 0.61 — 새로 받는 것 없음)
 windows-core = "0.61"
@@ -65,6 +67,8 @@ windows-sys = { version = "0.61", features = [
   "Win32_Security_Cryptography",
   # 10-20 누끼 도구 처음 받기 (cutout.rs) — 윈도우 프록시 설정을 따르는 WinHTTP. 받은 파일은 위 BCrypt SHA-256 으로 확인
   "Win32_Networking_WinHttp",
+  # 10-28 인터넷에서 끌어 받기 (web.rs) — 카톡에 붙여 넣을 파일·링크를 클립보드에 (OpenClipboard · GlobalAlloc)
+  "Win32_System_DataExchange", "Win32_System_Memory",
 ] }
 # 10-20 글(TXT) → Word · 한글(HWPX) · 엑셀 (text.rs) — 셋 다 zip 묶음. 업데이터가 이미 쓰는 zip 과 zlib-rs 라 새로 받는 것 없음
 zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs"] }

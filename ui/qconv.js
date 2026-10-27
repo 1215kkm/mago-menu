@@ -126,7 +126,8 @@ function drawHub(segs) {
       add(text(C, C + 27, 'hn', done.failed ? `${done.failed}개 빠짐` : '창에서 저장해요'));
     } else if (done.made) {
       add(svg('path', { d: `M${C - 14} ${C - 12} l10 10 l19 -20`, class: 'tick' }));
-      add(text(C, C + 13, 'ht small', `${done.made}개 만듦`));
+      // 웹 칸은 "저장함" · "카톡에 담음" (web.rs)
+      add(text(C, C + 13, 'ht small', done.head || `${done.made}개 만듦`));
       if (done.failed) add(text(C, C + 27, 'hn', `${done.failed}개 실패`));
       else if (done.movedTo) add(text(C, C + 27, 'hn', '다른 폴더에 저장'));
       else if (done.note) add(text(C, C + 27, 'hn', done.note));
@@ -466,6 +467,8 @@ T.event.listen('qconv:done', (e) => {
   render();
   // 못 바꾼 것이 있으면 그 이유를 말풍선으로 (가운데 원에는 다 들어가지 않는다)
   if (done.failed && done.firstError) say(done.made ? '일부는 넣지 못했어요' : '못 바꿨어요', done.firstError, true, true);
+  // 웹 칸 — 어디에 두었는지 · 카톡에서 할 일 (Ctrl+V)
+  else if (done.say) say(done.say[0], done.say[1], false, true);
 });
 T.event.listen('qconv:cur', (e) => {
   cur = e.payload;

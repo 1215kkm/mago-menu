@@ -8,6 +8,7 @@
 //! - `sheet.rs`   : JPG 한 장 미리 보기 창 — 그대로 저장 · 그림 크기 조절 뒤 저장
 //! - `content.rs` : 숨은 메뉴 내용(관리자가 GitHub 에서 고침) · 찾은 것 · 쪽지 방 창
 //! - `updater.rs` : 프로그램 자동 업데이트
+//! - `web.rs`     : 브라우저에서 끈 그림 · 링크 — 다운로드 폴더에 받기 · 바로가기 · 카톡으로
 //!
 //! 늘 트레이에서 기다린다. 설정 창(`settings`, ui/index.html)은 처음 켤 때 · 트레이를 누를 때 · 두 번째로 켤 때만 보인다.
 //! 설정 창 X 는 끝내기가 아니라 숨기기다 (끝내기는 트레이 메뉴 [끝내기]).
@@ -28,6 +29,7 @@ mod sheet;
 mod single;
 mod text;
 mod updater;
+mod web;
 
 use std::io::Write;
 use tauri::menu::{Menu, MenuItem};

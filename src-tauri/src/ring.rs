@@ -248,6 +248,12 @@ fn seg_of(id: &str) -> Seg {
         "mix-pdfs" => ("PDF", "파일마다"),
         "mix-jpg" => ("JPG", "한 장으로"),
         "mix-jpgs" => ("JPG", "쪽마다"),
+        "web-save" => ("저장", "받은 그대로"),
+        "web-jpg" => ("JPG", "바꿔 저장"),
+        "web-png" => ("PNG", "바꿔 저장"),
+        "web-get" => ("받기", "파일 그대로"),
+        "web-url" => ("바로가기", "링크 저장"),
+        "web-kakao" => ("카톡", "보내기"),
         _ => (id, ""),
     };
     let (hint, tip) = match id {
@@ -259,6 +265,12 @@ fn seg_of(id: &str) -> Seg {
         "mix-pdfs" => ("하나씩 PDF 로", "파일마다 PDF 를 하나씩 원본 옆에 만들어요. 이미 PDF 인 것은 그대로 둬요.".to_string()),
         "mix-jpg" => ("세로로 이어서", "위 목록의 1번부터 차례로 세로로 이어 긴 JPG 한 장으로 만들어요. 1번 파일 옆에 저장해요.".to_string()),
         "mix-jpgs" => ("쪽마다 따로", "쪽마다 JPG 를 만들어 새 폴더에 01, 02 … 순서대로 넣어요.".to_string()),
+        "web-save" => ("다운로드 폴더에", "인터넷의 그림을 받은 그대로 다운로드 폴더에 저장해요.".to_string()),
+        "web-jpg" => ("JPG 로 저장", "JPG 로 바꿔 다운로드 폴더에 저장해요.".to_string()),
+        "web-png" => ("PNG 로 저장", "PNG 로 바꿔 다운로드 폴더에 저장해요. 투명한 곳은 그대로예요.".to_string()),
+        "web-get" => ("다운로드 폴더에", "링크의 파일을 다운로드 폴더에 받아요.".to_string()),
+        "web-url" => (".url 로 저장", "누르면 이 주소가 열리는 바로가기를 다운로드 폴더에 만들어요.".to_string()),
+        "web-kakao" => ("카톡에 붙여 넣기", "보낼 것을 복사해 두고 카카오톡을 열어요. 보낼 대화방에서 Ctrl+V 를 누르세요.".to_string()),
         _ => ("", String::new()),
     };
     Seg { id: id.into(), label: label.into(), sub: sub.into(), hint: hint.into(), tip }
@@ -338,6 +350,26 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
     Plan { kind: kind.into(), title, note, segs: ids.iter().map(|i| if i == "gif" { gif_seg(n) } else { seg_of(i) }).collect(), files: vec![] }
 }
 
+/// 브라우저에서 끌어 온 것의 고리 (web.rs) — 쓰레기통은 쉰다 (지울 파일이 없다)
+pub fn web_plan(w: &crate::web::Web) -> Plan {
+    Plan { kind: "web".into(), title: crate::web::title(w), note: crate::web::note(w), segs: crate::web::ids(w).into_iter().map(seg_of).collect(), files: vec![] }
+}
+
+/// 끌기 데이터에 주소가 있을 때 웹으로 다룰까 — 파일이 없거나, 브라우저가 임시 폴더에 써 둔 파일뿐일 때 (파이어폭스 그림).
+/// 탐색기에서 끈 진짜 파일은 늘 파일로 (바로가기 .url 을 끌면 주소도 같이 온다)
+fn pick_web(paths: &[String], web: Option<crate::web::Web>) -> Option<crate::web::Web> {
+    let w = web?;
+    if paths.is_empty() {
+        return Some(w);
+    }
+    let in_temp = Path::new(&paths[0].to_lowercase()).starts_with(std::env::temp_dir().to_string_lossy().to_lowercase());
+    if paths.len() == 1 && !w.url.is_empty() && in_temp {
+        let again = crate::web::classify(&w.url, &w.title, &w.name, Some(PathBuf::from(&paths[0])))?;
+        return Some(crate::web::Web { bytes: w.bytes, ..again });
+    }
+    None
+}
+
 /// 고리 가운데에서 (dx, dy) 논리 px 떨어진 곳이 몇 번째 칸인가. 칸은 12시 방향에서 시계 방향으로.
 pub fn hit(dx: f64, dy: f64, n: usize) -> Option<usize> {
     if n == 0 {
@@ -404,6 +436,8 @@ struct Ring {
     total: u32,
     /// 이번에 찾은 숨은 메뉴 — 고리가 닫히면 쪽지 방을 연다
     secret: Option<String>,
+    /// 브라우저에서 끌어 온 것 (web.rs) — 있으면 파일 칸 대신 웹 칸
+    web: Option<crate::web::Web>,
 }
 
 static RING: Mutex<Option<Ring>> = Mutex::new(None);
@@ -581,6 +615,7 @@ fn hide() {
         r.busy = false;
         r.preview = false;
         r.paths.clear();
+        r.web = None;
         r.hover = None;
         r.trash = false;
         r.hide_at = None;
@@ -620,6 +655,10 @@ struct Done {
     note: String,
     /// 저장하지 않고 미리 보기 창을 열었다 (JPG 한 장 — sheet.rs)
     preview: bool,
+    /// 가운데 큰 글을 바꿀 때 ("저장함" · "카톡에 담음") — 비면 "N개 만듦"
+    head: String,
+    /// 캐릭터 말풍선 [굵게, 작게] — 웹 칸이 어디에 두었는지 · 카톡에서 할 일
+    say: Option<(String, String)>,
 }
 
 /// 형식 바꾸기가 아니라 파일 하나씩 따로 하는 칸 — 정사각(SNS) · 1MB · 누끼 · 글(TXT) → 문서
@@ -817,12 +856,23 @@ fn run(paths: Vec<String>, target: String) {
     finish(out);
 }
 
+/// 브라우저에서 끌어 온 것을 그 칸대로 (web.rs) — 다운로드 폴더에 받기 · 바꾸기 · 바로가기 · 카톡
+fn run_web(w: crate::web::Web, target: String) {
+    crate::log(&format!("[웹] {} {} → {target}", w.kind, if w.url.starts_with("data:") { "data:…" } else { &w.url }));
+    let s = settings();
+    let out = match crate::web::run(&w, &target, s.quality, &mut |f| emit("qconv:progress", Prog { done: 0, total: 1, frac: f })) {
+        Ok(d) => Done { made: 1, head: d.head, note: d.note, say: Some(d.say), ..Default::default() },
+        Err(e) => Done { failed: 1, first_error: e, ..Default::default() },
+    };
+    finish(out);
+}
+
 /// 결과를 고리에 알리고 잠깐 뒤 닫는다
 fn finish(out: Done) {
-    crate::log(&format!("[MAGO] 끝 — 만듦 {} · 실패 {} {}", out.made, out.failed, out.first_error));
+    crate::log(&format!("[MAGO] 끝 — 만듦 {} · 실패 {} {} {:?}", out.made, out.failed, out.first_error, out.say));
     emit("qconv:done", out.clone());
-    // 결과를 잠깐 보여 주고 닫는다 (실패면 조금 더 길게 — 이유를 읽을 시간)
-    let wait = if out.failed > 0 { 3200 } else { 1400 };
+    // 결과를 잠깐 보여 주고 닫는다 (실패 · 말풍선이 있으면 조금 더 길게 — 읽을 시간)
+    let wait = if out.failed > 0 || out.say.is_some() { 3200 } else { 1400 };
     ring(|r| {
         r.busy = false;
         r.hide_at = Some(Instant::now() + Duration::from_millis(wait));
@@ -896,12 +946,24 @@ fn picked_order(mut paths: Vec<String>) -> Vec<String> {
     paths
 }
 
-/// 둥근 창이 받은 끌기 소식
-fn on_enter(paths: Vec<String>) {
-    let paths = picked_order(paths);
-    let p = plan(&paths, &settings());
+/// 둥근 창이 받은 끌기 소식. 파일도 주소도 없으면(브라우저에서 글만 끔) 고리를 닫는다
+fn on_enter(paths: Vec<String>, web: Option<crate::web::Web>) {
+    let web = pick_web(&paths, web);
+    if paths.is_empty() && web.is_none() {
+        let empty = ring(|r| !r.busy && !r.preview);
+        if empty {
+            hide();
+        }
+        return;
+    }
+    let paths = if web.is_some() { vec![] } else { picked_order(paths) };
+    let p = match &web {
+        Some(w) => web_plan(w),
+        None => plan(&paths, &settings()),
+    };
     ring(|r| {
         r.paths = paths;
+        r.web = web;
         r.plan = p;
         r.preview = false;
     });
@@ -913,7 +975,7 @@ fn on_over(sx: i32, sy: i32) {
         let s = if r.scale > 0.0 { r.scale } else { 1.0 };
         let (dx, dy) = ((sx - r.cx) as f64 / s, (sy - r.cy) as f64 / s);
         let h = hit(dx, dy, r.plan.segs.len());
-        let t = on_trash(dx, dy);
+        let t = r.web.is_none() && on_trash(dx, dy);
         let c = h != r.hover || t != r.trash;
         r.hover = h;
         r.trash = t;
@@ -933,7 +995,27 @@ fn on_leave() {
 }
 
 /// 놓았다. 쓰레기통 위면 먹이고, 칸 위면 바꾸기 시작, 아니면 닫기.
-fn on_drop(paths: Vec<String>, sx: i32, sy: i32) {
+fn on_drop(paths: Vec<String>, web: Option<crate::web::Web>, sx: i32, sy: i32) {
+    if let Some(w) = pick_web(&paths, web) {
+        let pick = ring(|r| {
+            let s = if r.scale > 0.0 { r.scale } else { 1.0 };
+            r.plan = web_plan(&w);
+            r.web = Some(w.clone());
+            let h = hit((sx - r.cx) as f64 / s, (sy - r.cy) as f64 / s, r.plan.segs.len());
+            r.hover = h;
+            r.trash = false;
+            h.map(|i| r.plan.segs[i].id.clone())
+        });
+        match pick {
+            Some(target) => {
+                ring(|r| r.busy = true);
+                push_view();
+                std::thread::Builder::new().name("mago-web".into()).spawn(move || run_web(w, target)).ok();
+            }
+            None => hide(),
+        }
+        return;
+    }
     let paths = picked_order(paths);
     let (pick, trash) = ring(|r| {
         let s = if r.scale > 0.0 { r.scale } else { 1.0 };
@@ -976,9 +1058,11 @@ mod drop_win {
     use windows::core::{implement, w, Ref};
     use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINTL, WPARAM};
     use windows::Win32::Graphics::Gdi::{CombineRgn, CreateEllipticRgn, DeleteObject, SetWindowRgn, RGN_OR};
-    use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL};
+    use windows::Win32::System::Com::{IDataObject, DVASPECT_CONTENT, FORMATETC, TYMED_HGLOBAL, TYMED_ISTREAM};
+    use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::System::Ole::{IDropTarget, IDropTarget_Impl, OleInitialize, RegisterDragDrop, ReleaseStgMedium, CF_HDROP, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE};
+    use windows::Win32::System::Ole::{IDropTarget, IDropTarget_Impl, OleInitialize, RegisterDragDrop, ReleaseStgMedium, CF_HDROP, CF_UNICODETEXT, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_NONE};
     use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
     use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
     use windows::Win32::UI::WindowsAndMessaging::*;
@@ -1031,22 +1115,113 @@ mod drop_win {
         out
     }
 
+    /// 등록된 끌기 형식 번호 ("UniformResourceLocatorW" …)
+    fn cf(name: &str) -> u16 {
+        let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        unsafe { RegisterClipboardFormatW(windows::core::PCWSTR(w.as_ptr())) as u16 }
+    }
+
+    /// 끌기 데이터의 한 형식을 바이트로 (HGLOBAL 또는 IStream). lindex 는 FileContents 의 몇 번째 파일인지 (-1 = 상관없음)
+    unsafe fn bytes_of(obj: &IDataObject, cf: u16, lindex: i32) -> Option<Vec<u8>> {
+        let fmt = FORMATETC { cfFormat: cf, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0, lindex, tymed: (TYMED_HGLOBAL.0 | TYMED_ISTREAM.0) as u32 };
+        let mut m = obj.GetData(&fmt).ok()?;
+        let out = if m.tymed == TYMED_HGLOBAL.0 as u32 {
+            let g = m.u.hGlobal;
+            let p = GlobalLock(g) as *const u8;
+            let v = (!p.is_null()).then(|| std::slice::from_raw_parts(p, GlobalSize(g)).to_vec());
+            let _ = GlobalUnlock(g);
+            v
+        } else if m.tymed == TYMED_ISTREAM.0 as u32 {
+            (*m.u.pstm).as_ref().map(|st| {
+                let (mut v, mut buf) = (Vec::new(), vec![0u8; 256 * 1024]);
+                loop {
+                    let mut n = 0u32;
+                    if st.Read(buf.as_mut_ptr() as *mut _, buf.len() as u32, Some(&mut n)).is_err() || n == 0 {
+                        break;
+                    }
+                    v.extend_from_slice(&buf[..n as usize]);
+                }
+                v
+            })
+        } else {
+            None
+        };
+        ReleaseStgMedium(&mut m);
+        out
+    }
+
+    /// 넓은 글자(UTF-16) 바이트 → 글 (첫 NUL 까지)
+    fn wide(b: &[u8]) -> String {
+        let u: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
+        String::from_utf16_lossy(&u)
+    }
+
+    /// 브라우저가 넘긴 끌기 데이터 → 주소 · 제목 · 같이 준 파일 이름 (web.rs classify). `full` 이면 그 파일 내용(그림)까지 —
+    /// 내용은 놓을 때만 읽는다 (끄는 동안 여러 번 불린다)
+    pub(super) unsafe fn web_of(obj: Option<&IDataObject>, full: bool) -> Option<crate::web::Web> {
+        let obj = obj?;
+        let (mut url, mut title) = (String::new(), String::new());
+        if let Some(b) = bytes_of(obj, cf("UniformResourceLocatorW"), -1) {
+            url = wide(&b);
+        }
+        // 파이어폭스 — "주소\n제목"
+        if let Some(b) = bytes_of(obj, cf("text/x-moz-url"), -1) {
+            let t = wide(&b);
+            let mut it = t.lines();
+            let first = it.next().unwrap_or("").to_string();
+            if url.is_empty() {
+                url = first;
+            }
+            title = it.next().unwrap_or("").to_string();
+        }
+        if url.is_empty() {
+            if let Some(b) = bytes_of(obj, cf("UniformResourceLocator"), -1) {
+                url = String::from_utf8_lossy(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).into_owned();
+            }
+        }
+        // 주소창 주소 · 고른 글이 주소 하나뿐일 때
+        if url.is_empty() {
+            if let Some(b) = bytes_of(obj, CF_UNICODETEXT.0, -1) {
+                let t = wide(&b);
+                let t = t.trim();
+                if (t.starts_with("http://") || t.starts_with("https://")) && !t.contains(char::is_whitespace) {
+                    url = t.to_string();
+                }
+            }
+        }
+        // FILEGROUPDESCRIPTORW: 개수(4) + FILEDESCRIPTORW(592) … — 첫 파일 이름은 그 안 72 바이트째부터 260 글자
+        let mut name = String::new();
+        if let Some(b) = bytes_of(obj, cf("FileGroupDescriptorW"), -1) {
+            if b.len() >= 4 + 592 && u32::from_le_bytes([b[0], b[1], b[2], b[3]]) >= 1 {
+                name = wide(&b[4 + 72..4 + 72 + 520]);
+            }
+        }
+        let mut w = crate::web::classify(&url, &title, &name, None)?;
+        if full && !w.name.is_empty() {
+            w.bytes = bytes_of(obj, cf("FileContents"), 0);
+        }
+        Some(w)
+    }
+
     #[implement(IDropTarget)]
     struct Target;
 
     #[allow(non_snake_case)]
     impl IDropTarget_Impl for Target_Impl {
         fn DragEnter(&self, obj: Ref<'_, IDataObject>, _k: MODIFIERKEYS_FLAGS, pt: &POINTL, eff: *mut DROPEFFECT) -> windows::core::Result<()> {
+            let data = obj.as_ref().cloned();
             let paths = unsafe { paths_of(obj) };
-            let ok = !paths.is_empty();
-            super::on_enter(paths);
+            // 탐색기에서 여러 파일을 끌 때는 주소를 찾지 않는다 (브라우저는 많아야 임시 파일 하나)
+            let web = if paths.len() <= 1 { unsafe { web_of(data.as_ref(), false) } } else { None };
+            let ok = !paths.is_empty() || web.is_some();
+            super::on_enter(paths, web);
             super::on_over(pt.x, pt.y);
             unsafe { *eff = if ok { DROPEFFECT_COPY } else { DROPEFFECT_NONE } };
             Ok(())
         }
         fn DragOver(&self, _k: MODIFIERKEYS_FLAGS, pt: &POINTL, eff: *mut DROPEFFECT) -> windows::core::Result<()> {
             super::on_over(pt.x, pt.y);
-            let ok = ring(|r| !r.paths.is_empty());
+            let ok = ring(|r| !r.paths.is_empty() || r.web.is_some());
             unsafe { *eff = if ok { DROPEFFECT_COPY } else { DROPEFFECT_NONE } };
             Ok(())
         }
@@ -1055,10 +1230,13 @@ mod drop_win {
             Ok(())
         }
         fn Drop(&self, obj: Ref<'_, IDataObject>, _k: MODIFIERKEYS_FLAGS, pt: &POINTL, eff: *mut DROPEFFECT) -> windows::core::Result<()> {
+            let data = obj.as_ref().cloned();
             let paths = unsafe { paths_of(obj) };
+            // 그림 내용은 파일이 없을 때(브라우저)만 읽는다 — 탐색기 파일을 통째로 읽지 않게
+            let web = if paths.len() <= 1 { unsafe { web_of(data.as_ref(), paths.is_empty()) } } else { None };
             // **언제나 복사** — "옮김" 으로 답하면 탐색기가 원본을 지울 수 있다 (머리말)
-            unsafe { *eff = if paths.is_empty() { DROPEFFECT_NONE } else { DROPEFFECT_COPY } };
-            super::on_drop(paths, pt.x, pt.y);
+            unsafe { *eff = if paths.is_empty() && web.is_none() { DROPEFFECT_NONE } else { DROPEFFECT_COPY } };
+            super::on_drop(paths, web, pt.x, pt.y);
             Ok(())
         }
     }
@@ -1178,6 +1356,68 @@ mod drop_win {
             }
         }
 
+        /// 끌기 데이터에 한 형식을 넣는다 (브라우저가 넘기는 것처럼)
+        unsafe fn put(data: &IDataObject, name: &str, bytes: &[u8]) {
+            use windows::Win32::System::Com::{STGMEDIUM, STGMEDIUM_0};
+            use windows::Win32::System::Memory::{GlobalAlloc, GMEM_MOVEABLE};
+            let g = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).unwrap();
+            let p = GlobalLock(g) as *mut u8;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            let _ = GlobalUnlock(g);
+            let fmt = FORMATETC { cfFormat: if name == "text" { CF_UNICODETEXT.0 } else { cf(name) }, ptd: std::ptr::null_mut(), dwAspect: DVASPECT_CONTENT.0, lindex: -1, tymed: TYMED_HGLOBAL.0 as u32 };
+            let m = STGMEDIUM { tymed: TYMED_HGLOBAL.0 as u32, u: STGMEDIUM_0 { hGlobal: g }, pUnkForRelease: std::mem::ManuallyDrop::new(None) };
+            data.SetData(&fmt, &m, true).expect("끌기 데이터에 넣기");
+        }
+        fn utf16(s: &str) -> Vec<u8> {
+            s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect()
+        }
+
+        /// 10-28 — 크롬에서 그림을 끈 것처럼 (주소 + 바탕화면용 파일 이름 + 내용): 웹 칸이 뜨고 복사로 답한다.
+        /// 링크만 끌면 바로가기 · 카톡, 글만 끌면 고리를 닫는다. (놓기는 다운로드 폴더에 쓰므로 여기서는 하지 않는다 — web.rs 시험이 받기를 본다)
+        #[test]
+        fn a_browser_drag_gets_web_cells() {
+            unsafe {
+                let _ = OleInitialize(None);
+                *SETTINGS.lock().unwrap() = Some(Settings::default());
+                let target: IDropTarget = Target.into();
+                let enter = |data: &IDataObject| {
+                    ring(|r| { r.shown = true; r.busy = false; r.cx = 1000; r.cy = 1000; r.scale = 1.0; });
+                    let mut eff = DROPEFFECT(7);
+                    target.DragEnter(data, MODIFIERKEYS_FLAGS(0), POINTL { x: 1100, y: 1010 }, &mut eff).unwrap();
+                    (eff, ring(|r| r.plan.segs.iter().map(|g| g.id.clone()).collect::<Vec<_>>()), ring(|r| r.plan.title.clone()), ring(|r| r.shown))
+                };
+
+                let pic: IDataObject = SHCreateDataObject(None, None, None::<&IDataObject>).unwrap();
+                put(&pic, "UniformResourceLocatorW", &utf16("https://shop.example/item/7"));
+                let mut fgd = vec![0u8; 4 + 592];
+                fgd[0] = 1;
+                let nm = utf16("상품 사진.webp");
+                fgd[76..76 + nm.len()].copy_from_slice(&nm);
+                put(&pic, "FileGroupDescriptorW", &fgd);
+                put(&pic, "FileContents", b"RIFF....WEBP");
+                let (eff, segs, title, _) = enter(&pic);
+                assert_eq!(eff, DROPEFFECT_COPY, "브라우저에도 복사로 답한다");
+                assert_eq!(segs, ["web-save", "web-jpg", "web-png", "web-kakao"]);
+                assert_eq!(title, "그림");
+                let w = web_of(Some(&pic), true).unwrap();
+                assert_eq!((w.name.as_str(), w.bytes.as_deref()), ("상품 사진.webp", Some(&b"RIFF....WEBP"[..])), "놓을 때는 내용까지 읽는다");
+                assert!(web_of(Some(&pic), false).unwrap().bytes.is_none(), "끄는 동안은 내용을 읽지 않는다");
+                super::super::on_over(1000 + TRASH_X as i32, 1000 + TRASH_Y as i32);
+                assert!(!ring(|r| r.trash), "웹에서 온 것은 쓰레기통이 쉰다 (지울 파일이 없다)");
+
+                let link: IDataObject = SHCreateDataObject(None, None, None::<&IDataObject>).unwrap();
+                put(&link, "text", &utf16(" https://www.youtube.com/watch?v=abc "));
+                let (_, segs, title, _) = enter(&link);
+                assert_eq!((segs, title.as_str()), (vec!["web-url".to_string(), "web-kakao".to_string()], "유튜브"));
+
+                let words: IDataObject = SHCreateDataObject(None, None, None::<&IDataObject>).unwrap();
+                put(&words, "text", &utf16("그냥 고른 글자"));
+                let (eff, _, _, shown) = enter(&words);
+                assert_eq!(eff, DROPEFFECT_NONE);
+                assert!(!shown, "파일도 주소도 없으면 고리를 닫는다");
+            }
+        }
+
         #[test]
         fn a_shell_drop_on_a_segment_is_a_copy_and_converts_next_to_the_original() {
             unsafe {
@@ -1230,7 +1470,7 @@ mod drop_win {
                 // 쓰레기통 자리에 놓으면 바꾸지 않고 먹이러 간다 (없는 파일이라 휴지통에는 아무것도 안 간다 — 진짜 휴지통은 actions 의 손 확인)
                 ring(|r| { r.shown = true; r.busy = false; r.hide_at = None; r.cx = 1000; r.cy = 1000; r.scale = 1.0; });
                 let ghost = d.join("이미 없는 파일.png").to_string_lossy().to_string();
-                super::super::on_drop(vec![ghost], 1000 + TRASH_X as i32, 1000 + TRASH_Y as i32);
+                super::super::on_drop(vec![ghost], None, 1000 + TRASH_X as i32, 1000 + TRASH_Y as i32);
                 assert!(ring(|r| r.trash), "쓰레기통 위로 알아봐야 한다");
                 let t = Instant::now();
                 while ring(|r| r.busy || r.hide_at.is_none()) && t.elapsed() < Duration::from_secs(5) {
@@ -1329,6 +1569,26 @@ mod watch {
         }
     }
 
+    /// 끌기를 브라우저(크롬 · 엣지 · 웨일 · 파이어폭스)에서 시작했나. 그랬으면 그 창의 스레드 번호 (web.rs)
+    fn from_browser(x: i32, y: i32) -> Option<u32> {
+        unsafe {
+            let h = WindowFromPoint(POINT { x, y });
+            if h.is_null() {
+                return None;
+            }
+            if !matches!(class_of(GetAncestor(h, GA_ROOT)).as_str(), "Chrome_WidgetWin_1" | "MozillaWindowClass") {
+                return None;
+            }
+            Some(GetWindowThreadProcessId(h, std::ptr::null_mut()))
+        }
+    }
+
+    /// 윈도우의 끌어서 놓기(OLE)가 도는 중인가 — 그동안은 OLE 의 숨은 창이 마우스를 잡는다
+    /// (10-28 확인: DoDragDrop 중 마우스를 잡은 창 = CLIPBRDWNDCLASS). 브라우저에서 글자를 고르며 끌 때는 브라우저 창이 잡는다
+    fn ole_drag(capture: &str) -> bool {
+        capture == "CLIPBRDWNDCLASS"
+    }
+
     /// 그 스레드에서 마우스를 잡고 있는 창의 종류 (없으면 빈 글자)
     fn capture_class(thread: u32) -> String {
         unsafe {
@@ -1371,6 +1631,7 @@ mod watch {
                 let mut press = (0, 0);
                 let mut moved = false;
                 let mut shell: Option<u32> = None;
+                let mut browser: Option<u32> = None;
                 // 이번에 키를 누른 동안 이미 띄웠나 (Esc 로 닫은 뒤 키를 쥐고 있어도 다시 안 뜨게 — 키를 떼면 풀린다)
                 let mut fired = false;
                 // 10-20 CEO "시프트 누르고 있는 동안만 원형 메뉴가 나오도록" — 키를 뗀 때
@@ -1406,6 +1667,7 @@ mod watch {
                         moved = false;
                         fired = false;
                         shell = from_shell(x, y);
+                        browser = if shell.is_none() { from_browser(x, y) } else { None };
                     }
                     if !key {
                         fired = false;
@@ -1427,10 +1689,10 @@ mod watch {
                         }
                         if moved && key && !fired && !shown && !busy {
                             let img = drag_image();
-                            let cap = shell.map(capture_class).unwrap_or_default();
-                            if img || (shell.is_some() && !lasso(&cap)) {
+                            let cap = shell.or(browser).map(capture_class).unwrap_or_default();
+                            if img || (shell.is_some() && !lasso(&cap)) || (browser.is_some() && ole_drag(&cap)) {
                                 fired = true;
-                                crate::log(&format!("[MAGO] 고리 띄움 (끌기 그림={img} 탐색기에서 시작={} 마우스 잡은 창={cap})", shell.is_some()));
+                                crate::log(&format!("[MAGO] 고리 띄움 (끌기 그림={img} 탐색기에서 시작={} 브라우저에서 시작={} 마우스 잡은 창={cap})", shell.is_some(), browser.is_some()));
                                 show_at(&app, x, y, false);
                             }
                         }
