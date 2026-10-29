@@ -2,6 +2,7 @@
 # 대표님이 직접 돌리는 올리기 — `bash scripts/publish.sh 0.1.8`
 # release/v<판>/ (release-build.ps1 → make-latest.py 로 만든 것) 을 GitHub 릴리스로 올리고, 자동 업데이트가 보는 latest.json 을 다시 읽어 확인한다.
 set -euo pipefail
+export PYTHONIOENCODING=utf-8
 V="${1:?판 번호를 주세요 (예: 0.1.8)}"
 cd "$(dirname "$0")/.."
 D="release/v$V"
