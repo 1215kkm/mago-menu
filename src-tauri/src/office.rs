@@ -310,6 +310,72 @@ mod com {
         r
     }
 
+    /// 그림을 Word 에 넣는다 — 켜져 있는 Word 의 지금 문서 커서 자리에, 문서가 없으면 새 문서에. Word 를 보이게 하고 앞으로 (web.rs)
+    pub fn word_picture(pic: &Path) -> Result<(), String> {
+        let inited = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let r = (|| {
+            let pic = std::path::absolute(pic).map_err(|e| format!("파일 위치를 알 수 없어요: {e}"))?;
+            let app = running("Word.Application").map_or_else(|| Obj::create("Word.Application"), Ok).map_err(|e| if e == super::NO_APP { "이 PC 에 Word 가 없어요".to_string() } else { format!("Word 를 {e}") })?;
+            let docs = app.obj("Documents", vec![])?;
+            if docs.get("Count")?.as_i32().unwrap_or(0) == 0 {
+                docs.obj("Add", vec![])?;
+            }
+            let _ = app.put("Visible", Var::bool(true));
+            // AddPicture(FileName, LinkToFile, SaveWithDocument) — 파일과 이어 두지 않고 문서 안에 넣는다. 쪽보다 크면 Word 가 쪽 폭에 맞춘다
+            app.obj("Selection", vec![])?.obj("InlineShapes", vec![])?.call("AddPicture", vec![Var::str(&pic.to_string_lossy()), Var::bool(false), Var::bool(true)])?;
+            unsafe {
+                let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(windows::Win32::UI::WindowsAndMessaging::ASFW_ANY);
+            }
+            let _ = app.call("Activate", vec![]);
+            Ok(())
+        })();
+        if inited {
+            unsafe { CoUninitialize() };
+        }
+        r
+    }
+
+    /// 시험: 보이지 않는 새 Word 로 word_picture 와 같은 순서(새 문서 → 커서 자리에 AddPicture)를 밟고 docx 로 저장해 본다.
+    /// Word 가 켜져 있으면 그 Word 에 붙을 수 있어 하지 않는다
+    #[cfg(test)]
+    #[test]
+    #[ignore = "이 PC 의 Word 를 띄운다 (보이지 않게) — Word 가 꺼져 있을 때 손으로"]
+    fn word_puts_the_picture_in_the_document() {
+        assert!(running("Word.Application").is_none(), "Word 가 켜져 있으면 하지 않는다");
+        let dir = std::env::temp_dir().join(format!("mago-word-pic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pic = dir.join("그림.png");
+        image::RgbaImage::from_pixel(40, 30, image::Rgba([200, 30, 60, 255])).save(&pic).unwrap();
+        let out = dir.join("결과.docx");
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let app = Obj::create("Word.Application").unwrap();
+        let _ = app.put("DisplayAlerts", Var::i4(0));
+        let doc = app.obj("Documents", vec![]).unwrap().obj("Add", vec![]).unwrap();
+        app.obj("Selection", vec![]).unwrap().obj("InlineShapes", vec![]).unwrap().call("AddPicture", vec![Var::str(&pic.to_string_lossy()), Var::bool(false), Var::bool(true)]).unwrap();
+        let n = doc.obj("InlineShapes", vec![]).unwrap().get("Count").unwrap().as_i32();
+        // 16 = wdFormatDocumentDefault (docx)
+        doc.call("SaveAs2", vec![Var::str(&out.to_string_lossy()), Var::i4(16)]).or_else(|_| doc.call("SaveAs", vec![Var::str(&out.to_string_lossy()), Var::i4(16)])).unwrap();
+        let _ = doc.call("Close", vec![Var::i4(0)]);
+        let _ = app.call("Quit", vec![Var::i4(0)]);
+        assert_eq!(n, Some(1), "그림 하나가 문서에 들어가야 한다");
+        let z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        assert!(z.file_names().any(|f| f.starts_with("word/media/")), "docx 안에 그림이 들어 있어야 한다 (파일과 이어 둔 것이 아니라)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 이미 켜져 있는 그 프로그램 (없으면 None)
+    fn running(prog_id: &str) -> Option<Obj> {
+        use windows::core::{IUnknown, Interface};
+        unsafe {
+            let clsid: GUID = CLSIDFromProgID(&HSTRING::from(prog_id)).ok()?;
+            let mut unk: Option<IUnknown> = None;
+            windows::Win32::System::Ole::GetActiveObject(&clsid, None, &mut unk).ok()?;
+            unk?.cast::<IDispatch>().ok().map(Obj)
+        }
+    }
+
     fn excel(src: &str, dst: &str) -> Result<(), String> {
         let app = Obj::create("Excel.Application").map_err(|e| if e == super::NO_APP { e } else { format!("엑셀을 {e}") })?;
         let alerts = app.get("DisplayAlerts").ok();
@@ -362,8 +428,16 @@ mod com {
     }
 }
 
+/// 그림을 Word 문서에 넣고 Word 를 앞으로 (켜져 있으면 지금 문서의 커서 자리, 아니면 새 문서)
+pub fn word_picture(pic: &Path) -> Result<(), String> {
+    com::word_picture(pic)
+}
+
 #[cfg(not(windows))]
 mod com {
+    pub fn word_picture(_: &std::path::Path) -> Result<(), String> {
+        Err("Windows 에서만 돼요".into())
+    }
     pub fn export(_: &std::path::Path, _: &std::path::Path, _: &str) -> Result<(), String> {
         Err("Windows 에서만 돼요".into())
     }

@@ -7,7 +7,14 @@
 //! - 그림: 저장(받은 그대로) · JPG · PNG · 포토샵 · 피그마 · Word · 다른 프로그램으로 · 카톡
 //! - 파일 링크(.pdf · .zip · .mp4 …): 받기 · 바로가기 · 다른 프로그램으로 · 카톡(파일)
 //! 포토샵 · 피그마 · Word 칸은 이 PC 에 깔려 있을 때만 (10-29 CEO "피그마나 포토샵으로 바로 열리도록 … 워드같은 다른프로그램에도").
-//! 포토샵은 받은 파일을 바로 연다. 피그마 · Word 는 파일을 넘겨 열 길이 없어 그림을 클립보드에 담고 그 프로그램을 연다 — 그 안에서 Ctrl+V.
+//! 10-29 CEO "카톡이나 워드 등등에다가 놓으면 모두 저장만 되고 실제 작동은 안돼 … 카톡이 뜨고 누구한테 보낼지 뜬다음 선택하면 첨부가 되야" —
+//! 저장만 하고 손으로 Ctrl+V 하게 두지 않는다:
+//! - 포토샵: 받은 파일로 바로 연다.
+//! - Word: 켜져 있는 Word 의 지금 문서 커서 자리에(없으면 새 문서에) 그림을 넣는다 (office::word_picture, COM).
+//! - 피그마: 그림을 클립보드에 담고 피그마를 연 뒤, **피그마가 맨 앞에 오면** Ctrl+V 를 대신 누른다 (캔버스 가운데에 붙는다).
+//! - 카톡: 카카오톡(대화방 목록)을 앞으로 띄운다 → 사람이 보낼 대화방을 열면 → **그 대화방에 첨부**(Ctrl+V)한다.
+//!   보내기(전송)는 카톡의 확인 창에서 사람이 누른다. 2분 안에 대화방을 안 열면 그만둔다.
+//!   Ctrl+V 는 맨 앞 창이 그 프로그램 것일 때만, Shift · Ctrl · Alt 에서 손을 뗀 뒤에 보낸다 (keys).
 //! - 그 밖의 링크 · 유튜브: 바로가기(.url) · 카톡(링크)
 //!
 //! 받은 것은 **다운로드 폴더**(설정에서 바꿀 수 있다 — Settings.web_dir)에, 같은 이름이 있으면 `(2)`.
@@ -410,17 +417,22 @@ pub fn run(w: &Web, target: &str, s_quality: u8, down: &Path, progress: &mut dyn
             apps::open_with(&apps::photoshop().ok_or("포토샵을 찾지 못했어요")?, Some(&p))?;
             Ok(Did { head: "포토샵으로".into(), note: at.clone(), say: ("포토샵으로 열었어요".into(), format!("{at}에도 저장했어요 · {}", file_name(&p))), file: None })
         }
-        "web-figma" | "web-word" => {
+        "web-word" => {
+            // Word 가 못 읽는 webp 는 PNG 로 바꿔 넣는다
+            let e = ext_of(&shown_name(w));
+            let p = if matches!(e.as_str(), "" | "jpg" | "jpeg" | "jfif" | "png" | "gif" | "bmp") { fetch(w, &down, progress)? } else { fetch_as(w, &down, "png", s_quality, progress)? };
+            crate::office::word_picture(&p)?;
+            Ok(Did { head: "Word 에 넣음".into(), note: at.clone(), say: ("Word 문서에 넣었어요".into(), format!("커서 자리에 · {at}에도 저장")), file: None })
+        }
+        "web-figma" => {
             let p = fetch(w, &down, progress)?;
-            let figma = target == "web-figma";
-            let (name, where_) = if figma { ("피그마", "피그마 캔버스에서") } else { ("Word", "Word 문서에서") };
             #[cfg(windows)]
             {
                 clip::image(&p)?;
-                let exe = if figma { apps::figma() } else { apps::word() };
-                apps::open_with(&exe.ok_or(format!("{name} 프로그램을 찾지 못했어요"))?, None)?;
+                apps::open_with(&apps::figma().ok_or("피그마를 찾지 못했어요")?, None)?;
+                keys::paste_now_when_front("figma.exe", std::time::Duration::from_secs(20));
             }
-            Ok(Did { head: format!("{name}에 담음"), note: "Ctrl+V".into(), say: (format!("{where_} Ctrl+V"), format!("{name}을 열고 그림을 복사해 두었어요 · {at}에도 저장")), file: None })
+            Ok(Did { head: "피그마로".into(), note: at.clone(), say: ("피그마에 붙여 넣어요".into(), format!("열려 있는 파일 가운데에 · {at}에도 저장")), file: None })
         }
         "web-with" => {
             let p = fetch(w, &down, progress)?;
@@ -434,21 +446,23 @@ pub fn run(w: &Web, target: &str, s_quality: u8, down: &Path, progress: &mut dyn
                 let p = fetch(w, &down, progress)?;
                 #[cfg(windows)]
                 clip::files(&[p.clone()])?;
-                file_name(&p)
+                Clip::Files(vec![p])
             } else {
                 #[cfg(windows)]
                 clip::text(&w.url)?;
-                w.url.clone()
+                Clip::Text(w.url.clone())
             };
             #[cfg(windows)]
             let opened = kakao::open();
             #[cfg(not(windows))]
             let opened = false;
-            Ok(if opened {
-                Did { head: "카톡에 담음".into(), note: "Ctrl+V".into(), say: ("보낼 대화방에서 Ctrl+V".into(), format!("카카오톡을 열었어요 · {what}")), file: None }
-            } else {
-                Did { head: "복사해 둠".into(), note: "Ctrl+V".into(), say: ("카카오톡을 찾지 못했어요".into(), "복사해 두었어요 — 붙여 넣을 곳에서 Ctrl+V".into()), file: None }
-            })
+            if !opened {
+                return Ok(Did { head: "복사해 둠".into(), note: "Ctrl+V".into(), say: ("카카오톡을 찾지 못했어요".into(), "복사해 두었어요 — 붙여 넣을 곳에서 Ctrl+V".into()), file: None });
+            }
+            // 사람이 대화방을 열면 거기에 붙인다 (그 사이 클립보드가 바뀌었을 수 있어 붙이기 직전에 다시 담는다)
+            #[cfg(windows)]
+            keys::paste_when_front("kakaotalk.exe", Some(kakao::is_chat), std::time::Duration::from_secs(120)).then(move || what.put());
+            Ok(Did { head: "대화방을 고르세요".into(), note: "카톡".into(), say: ("보낼 대화방을 여세요".into(), "대화방을 열면 거기에 첨부해 둘게요 — 전송은 카톡에서".into()), file: None })
         }
         _ => Err(format!("모르는 칸이에요: {target}")),
     }
@@ -838,6 +852,138 @@ pub mod clip {
     }
 }
 
+/// 붙이기 직전에 클립보드에 다시 담을 것
+enum Clip {
+    Files(Vec<PathBuf>),
+    Text(String),
+}
+
+impl Clip {
+    fn put(&self) -> Result<(), String> {
+        #[cfg(windows)]
+        return match self {
+            Clip::Files(f) => clip::files(f),
+            Clip::Text(t) => clip::text(t),
+        };
+        #[cfg(not(windows))]
+        Err("윈도우에서만 돼요".into())
+    }
+}
+
+// ── 그 프로그램이 맨 앞에 오면 Ctrl+V ──────────────────────────────────────────
+
+#[cfg(windows)]
+mod keys {
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::{CloseHandle, HWND};
+    use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_LBUTTON, VK_MENU, VK_SHIFT, VK_V};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+
+    /// 창의 프로그램 파일 이름 (소문자 · "kakaotalk.exe")
+    pub fn exe_of(h: HWND) -> String {
+        unsafe {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, &mut pid);
+            let ph = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if ph.is_null() {
+                return String::new();
+            }
+            let mut buf = [0u16; 1024];
+            let mut n = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(ph, 0, buf.as_mut_ptr(), &mut n) != 0;
+            CloseHandle(ph);
+            if !ok {
+                return String::new();
+            }
+            let full = String::from_utf16_lossy(&buf[..n as usize]);
+            full.rsplit('\\').next().unwrap_or("").to_lowercase()
+        }
+    }
+
+    fn held(vk: u16) -> bool {
+        unsafe { (GetAsyncKeyState(vk as i32) as u16 & 0x8000) != 0 }
+    }
+
+    /// 사람이 Shift · Ctrl · Alt · 마우스 왼쪽에서 손을 뗐나 — 누른 채로 Ctrl+V 를 보내면 다른 단축키가 된다
+    fn hands_off() -> bool {
+        ![VK_SHIFT, VK_CONTROL, VK_MENU, VK_LBUTTON].iter().any(|&k| held(k))
+    }
+
+    fn ctrl_v() {
+        let key = |vk: u16, up: bool| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: if up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dwExtraInfo: 0 } } };
+        let v = [key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)];
+        unsafe { SendInput(v.len() as u32, v.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+    }
+
+    /// 기다리는 일 하나 — `then` 으로 붙이기 직전에 할 일(클립보드 다시 담기)을 단다
+    pub struct Wait {
+        exe: &'static str,
+        pick: Option<fn(HWND) -> bool>,
+        limit: Duration,
+    }
+
+    /// `exe` 의 창(그중 `pick` 이 고른 창)이 맨 앞에 오면 Ctrl+V 를 한 번. 처음부터 맨 앞이던 창은 한 번 다른 창으로 바뀐 뒤에만 친다
+    pub fn paste_when_front(exe: &'static str, pick: Option<fn(HWND) -> bool>, limit: Duration) -> Wait {
+        Wait { exe, pick, limit }
+    }
+
+    impl Wait {
+        pub fn then(self, before: impl FnOnce() -> Result<(), String> + Send + 'static) {
+            self.run(Some(Box::new(before)));
+        }
+        fn run(self, before: Option<Box<dyn FnOnce() -> Result<(), String> + Send>>) {
+            let Wait { exe, pick, limit } = self;
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                let first = GetForegroundWindow_() as usize;
+                let mut moved = false;
+                while start.elapsed() < limit {
+                    std::thread::sleep(Duration::from_millis(250));
+                    let fg = GetForegroundWindow_();
+                    if fg as usize != first {
+                        moved = true;
+                    }
+                    let ours = !fg.is_null() && exe_of(fg) == exe && pick.is_none_or(|f| f(fg));
+                    // 카톡 대화방은 사람이 새로 연(맨 앞으로 온) 것만 — MAGO 가 놓기를 받은 순간 앞에 있던 대화방에는 붙이지 않는다
+                    if !ours || (pick.is_some() && !moved) {
+                        continue;
+                    }
+                    // 손을 떼고, 대화방이 다 그려질 때까지 조금
+                    let t = Instant::now();
+                    while !hands_off() && t.elapsed() < Duration::from_secs(5) {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                    if GetForegroundWindow_() != fg || !hands_off() {
+                        continue;
+                    }
+                    if let Some(b) = before {
+                        if let Err(e) = b() {
+                            crate::log(&format!("[웹] {exe} 에 붙이기 전 클립보드: {e}"));
+                            return;
+                        }
+                    }
+                    ctrl_v();
+                    crate::log(&format!("[웹] {exe} 에 Ctrl+V ({}초 뒤)", start.elapsed().as_secs()));
+                    return;
+                }
+                crate::log(&format!("[웹] {exe} 이(가) {}초 안에 앞에 안 와서 붙이지 않음", limit.as_secs()));
+            });
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn GetForegroundWindow_() -> HWND {
+        unsafe { GetForegroundWindow() }
+    }
+
+    /// 피그마처럼 다시 담을 것이 없을 때
+    pub fn paste_now_when_front(exe: &'static str, limit: Duration) {
+        Wait { exe, pick: None, limit }.run(None);
+    }
+}
+
 // ── 포토샵 · 피그마 · Word · 다른 프로그램으로 ──────────────────────────────────
 
 #[cfg(windows)]
@@ -937,6 +1083,39 @@ mod kakao {
         [r"C:\Program Files (x86)\Kakao\KakaoTalk\KakaoTalk.exe", r"C:\Program Files\Kakao\KakaoTalk\KakaoTalk.exe"].iter().map(PathBuf::from).find(|p| p.is_file())
     }
 
+    /// 카톡 대화방 창인가 — 대화방은 글 쓰는 칸(RICHEDIT50W)이 있고, 친구 · 대화 목록 창에는 없다
+    pub fn is_chat(h: windows_sys::Win32::Foundation::HWND) -> bool {
+        use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowExW;
+        fn find(parent: windows_sys::Win32::Foundation::HWND, class: &[u16], depth: u32) -> bool {
+            unsafe {
+                if !FindWindowExW(parent, std::ptr::null_mut(), class.as_ptr(), std::ptr::null()).is_null() {
+                    return true;
+                }
+                if depth == 0 {
+                    return false;
+                }
+                let mut c = FindWindowExW(parent, std::ptr::null_mut(), std::ptr::null(), std::ptr::null());
+                while !c.is_null() {
+                    if find(c, class, depth - 1) {
+                        return true;
+                    }
+                    c = FindWindowExW(parent, c, std::ptr::null(), std::ptr::null());
+                }
+                false
+            }
+        }
+        let class: Vec<u16> = "RICHEDIT50W\0".encode_utf16().collect();
+        if find(h, &class, 4) {
+            return true;
+        }
+        // 글 칸 이름이 바뀐 판이라도 — 대화방은 제목이 방 이름인 EVA_Window_Dblclk (목록 창은 제목이 "카카오톡")
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowTextW};
+        let (mut c, mut t) = ([0u16; 64], [0u16; 256]);
+        let (cn, tn) = unsafe { (GetClassNameW(h, c.as_mut_ptr(), 64), GetWindowTextW(h, t.as_mut_ptr(), 256)) };
+        let (c, t) = (String::from_utf16_lossy(&c[..cn.max(0) as usize]), String::from_utf16_lossy(&t[..tn.max(0) as usize]));
+        c == "EVA_Window_Dblclk" && !t.trim().is_empty() && t != "카카오톡" && !t.eq_ignore_ascii_case("KakaoTalk")
+    }
+
     /// 카카오톡을 연다 (켜져 있으면 그 창이 앞으로 나온다). 깔려 있지 않으면 false
     pub fn open() -> bool {
         let Some(p) = exe() else { return false };
@@ -994,6 +1173,19 @@ mod tests {
         assert_eq!(place(&down), "다운로드 폴더");
         assert_eq!(place(&mine), "받은 그림 폴더");
         let _ = std::fs::remove_dir_all(mine.parent().unwrap());
+    }
+
+    /// 카톡 대화 목록 창(제목 "카카오톡")은 대화방이 아니다 — 거기에 붙이면 안 된다. 카톡이 켜져 있을 때만 (보기만 한다)
+    #[cfg(windows)]
+    #[test]
+    fn the_kakao_list_window_is_not_a_chat_room() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
+        let class: Vec<u16> = "EVA_Window_Dblclk ".encode_utf16().collect();
+        let title: Vec<u16> = "카카오톡 ".encode_utf16().collect();
+        let h = unsafe { FindWindowW(class.as_ptr(), title.as_ptr()) };
+        if !h.is_null() {
+            assert!(!super::kakao::is_chat(h));
+        }
     }
 
     #[test]
