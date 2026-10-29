@@ -232,7 +232,7 @@ pub fn sheet_cancel(app: AppHandle) {
 #[tauri::command]
 pub fn sheet_reveal() -> Result<(), String> {
     let f = pending(|p| p.as_ref().and_then(|p| p.saved.clone())).ok_or("아직 저장하지 않았어요")?;
-    std::process::Command::new("explorer").arg(format!("/select,{}", f.display())).spawn().map(|_| ()).map_err(|e| format!("탐색기를 열지 못했어요: {e}"))
+    crate::web::reveal(&f)
 }
 
 /// [닫기]

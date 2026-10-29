@@ -78,6 +78,12 @@ pub struct Settings {
     pub gif_ms: u32,
     /// 고리 옆 캐릭터 — CHARACTERS 중 하나 (그림은 ui/mago/<이름>/, 쓰레기통은 ui/mago/)
     pub character: String,
+    /// 브라우저에서 끌었을 때 보일 칸 — web::OPTS 중 (깔리지 않은 프로그램 칸은 켜 두어도 안 보인다). 칸이 없는 옛 설정은 전부
+    pub web: Vec<String>,
+    /// 인터넷에서 끌어 받은 것을 둘 폴더 — 비어 있으면 다운로드 폴더 (10-29 CEO "저장폴더는 설정에서 바꿀수 있게")
+    pub web_dir: String,
+    /// 저장한 뒤 그 폴더를 열어 파일을 골라 둔다 (10-29 CEO "저장한후에 폴더가 바로 열리는걸 기본으로")
+    pub web_open: bool,
     /// 설정 모양 판. 0 = v0.3.45 (기본 Shift · 꺼짐) · 1 = v0.3.46 (기본 Ctrl) · 2 = v0.3.47 (Shift) · 3 = MAGO 0.1.0 (기본 켜짐) · 4 = 0.1.1 (GIF 칸 기본) · 5 = 지금 (누끼 칸 기본).
     /// 칸이 없으면 0 으로 읽는다 — 구조체 전체 기본값(지금 판)을 쓰면 옛 설정을 알아볼 수 없다
     #[serde(default)]
@@ -105,6 +111,9 @@ impl Default for Settings {
             gif_ms: crate::anim::DEFAULT_MS,
             // 0.1.2 부터 검은 고양이가 기본 (10-20 CEO "고양이 케릭터 추가해서 기본으로"). 칸이 없는 옛 설정도 고양이로 읽힌다
             character: "cat".into(),
+            web: crate::web::OPTS.iter().map(|s| s.to_string()).collect(),
+            web_dir: String::new(),
+            web_open: true,
             ver: SETTINGS_VER,
         }
     }
@@ -127,6 +136,11 @@ impl Settings {
         self.mix = keep(&self.mix, MIX_OPTS);
         self.audio = keep(&self.audio, AUDIO_OPTS);
         self.pdf = keep(&self.pdf, PDF_OPTS);
+        self.web = keep(&self.web, crate::web::OPTS);
+        self.web_dir = self.web_dir.trim().to_string();
+        if !self.web_dir.is_empty() && !Path::new(&self.web_dir).is_absolute() {
+            self.web_dir.clear();
+        }
         // 0.3.45(Shift)·0.3.46(Ctrl) 때 저장된 키는 그때의 기본값이다 — 한 번만 지금 기본(Shift)으로 맞춘다.
         // Ctrl 끌기는 탐색기의 "복사" 라 고리 키로 쓰면 복사하려던 사람 앞에 고리가 뜬다. Alt 를 고른 사람은 그대로.
         if self.ver < 2 && self.key == "ctrl" {
@@ -253,6 +267,10 @@ fn seg_of(id: &str) -> Seg {
         "web-png" => ("PNG", "바꿔 저장"),
         "web-get" => ("받기", "파일 그대로"),
         "web-url" => ("바로가기", "링크 저장"),
+        "web-ps" => ("포토샵", "바로 열기"),
+        "web-figma" => ("피그마", "붙여 넣기"),
+        "web-word" => ("Word", "붙여 넣기"),
+        "web-with" => ("다른 앱", "골라 열기"),
         "web-kakao" => ("카톡", "보내기"),
         _ => (id, ""),
     };
@@ -270,6 +288,10 @@ fn seg_of(id: &str) -> Seg {
         "web-png" => ("PNG 로 저장", "PNG 로 바꿔 다운로드 폴더에 저장해요. 투명한 곳은 그대로예요.".to_string()),
         "web-get" => ("다운로드 폴더에", "링크의 파일을 다운로드 폴더에 받아요.".to_string()),
         "web-url" => (".url 로 저장", "누르면 이 주소가 열리는 바로가기를 다운로드 폴더에 만들어요.".to_string()),
+        "web-ps" => ("포토샵으로 열기", "다운로드 폴더에 저장하고 포토샵으로 열어요. 포토샵이 못 여는 WEBP 는 PNG 로 바꿔서 열어요.".to_string()),
+        "web-figma" => ("피그마에 붙여 넣기", "다운로드 폴더에 저장하고, 그림을 복사해 둔 채 피그마를 열어요. 캔버스에서 Ctrl+V 를 누르세요.".to_string()),
+        "web-word" => ("Word 에 붙여 넣기", "다운로드 폴더에 저장하고, 그림을 복사해 둔 채 Word 를 열어요. 문서에서 Ctrl+V 를 누르세요.".to_string()),
+        "web-with" => ("다른 프로그램으로", "다운로드 폴더에 저장하고, 열 프로그램을 고르는 윈도우 창을 띄워요. 기본 프로그램은 바뀌지 않아요.".to_string()),
         "web-kakao" => ("카톡에 붙여 넣기", "보낼 것을 복사해 두고 카카오톡을 열어요. 보낼 대화방에서 Ctrl+V 를 누르세요.".to_string()),
         _ => ("", String::new()),
     };
@@ -351,8 +373,22 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
 }
 
 /// 브라우저에서 끌어 온 것의 고리 (web.rs) — 쓰레기통은 쉰다 (지울 파일이 없다)
+/// 칸은 설정에서 켠 것 · 이 PC 에 깔린 프로그램 것만, 설명의 "다운로드 폴더" 는 고른 저장 폴더 이름으로
 pub fn web_plan(w: &crate::web::Web) -> Plan {
-    Plan { kind: "web".into(), title: crate::web::title(w), note: crate::web::note(w), segs: crate::web::ids(w).into_iter().map(seg_of).collect(), files: vec![] }
+    let s = settings();
+    let at = crate::web::save_dir(&s.web_dir).map(|d| crate::web::place(&d)).unwrap_or_else(|_| "다운로드 폴더".into());
+    let segs = crate::web::ids(w)
+        .into_iter()
+        .filter(|id| !crate::web::OPTS.contains(id) || s.web.iter().any(|x| x == id))
+        .filter(|id| crate::web::available(id))
+        .map(|id| {
+            let mut g = seg_of(id);
+            g.hint = g.hint.replace("다운로드 폴더", &at);
+            g.tip = g.tip.replace("다운로드 폴더", &at);
+            g
+        })
+        .collect();
+    Plan { kind: "web".into(), title: crate::web::title(w), note: crate::web::note(w), segs, files: vec![] }
 }
 
 /// 끌기 데이터에 주소가 있을 때 웹으로 다룰까 — 파일이 없거나, 브라우저가 임시 폴더에 써 둔 파일뿐일 때 (파이어폭스 그림).
@@ -869,8 +905,17 @@ fn run(paths: Vec<String>, target: String) {
 fn run_web(w: crate::web::Web, target: String) {
     crate::log(&format!("[웹] {} {} → {target}", w.kind, if w.url.starts_with("data:") { "data:…" } else { &w.url }));
     let s = settings();
-    let out = match crate::web::run(&w, &target, s.quality, &mut |f| emit("qconv:progress", Prog { done: 0, total: 1, frac: f })) {
-        Ok(d) => Done { made: 1, head: d.head, note: d.note, say: Some(d.say), ..Default::default() },
+    let got = crate::web::save_dir(&s.web_dir).and_then(|dir| crate::web::run(&w, &target, s.quality, &dir, &mut |f| emit("qconv:progress", Prog { done: 0, total: 1, frac: f })));
+    let out = match got {
+        Ok(d) => {
+            // 저장한 것은 폴더를 열어 골라 둔다 (설정에서 끌 수 있다). 프로그램으로 연 칸은 그 프로그램이 앞에 나온다
+            if let (true, Some(f)) = (s.web_open, d.file.as_ref()) {
+                if let Err(e) = crate::web::reveal(f) {
+                    crate::log(&format!("[웹] {e}"));
+                }
+            }
+            Done { made: 1, head: d.head, note: d.note, say: Some(d.say), ..Default::default() }
+        }
         Err(e) => Done { failed: 1, first_error: e, ..Default::default() },
     };
     finish(out);
@@ -1406,7 +1451,9 @@ mod drop_win {
                 put(&pic, "FileContents", b"RIFF....WEBP");
                 let (eff, segs, title, _) = enter(&pic);
                 assert_eq!(eff, DROPEFFECT_COPY, "브라우저에도 복사로 답한다");
-                assert_eq!(segs, ["web-save", "web-jpg", "web-png", "web-kakao"]);
+                // 포토샵 · 피그마 · Word 칸은 이 PC 에 깔린 것만
+                let want: Vec<&str> = ["web-save", "web-jpg", "web-png", "web-ps", "web-figma", "web-word", "web-with", "web-kakao"].into_iter().filter(|i| crate::web::available(i)).collect();
+                assert_eq!(segs, want);
                 assert_eq!(title, "그림");
                 let w = web_of(Some(&pic), true).unwrap();
                 assert_eq!((w.name.as_str(), w.bytes.as_deref()), ("상품 사진.webp", Some(&b"RIFF....WEBP"[..])), "놓을 때는 내용까지 읽는다");
@@ -1882,6 +1929,17 @@ mod tests {
         assert_eq!(old.clean().mix, MIX_OPTS);
         let odd: Settings = serde_json::from_value(serde_json::json!({ "mix": ["mix-jpg", "x"], "ver": 5 })).unwrap();
         assert_eq!(odd.clean().mix, ["mix-jpg"]);
+    }
+
+    /// 0.1.6 까지 저장된 설정(인터넷 칸이 없다) — 칸은 전부, 저장 폴더는 다운로드, 저장 뒤 폴더 열기는 켬
+    #[test]
+    fn old_settings_get_the_web_defaults() {
+        let s = serde_json::from_value::<Settings>(serde_json::json!({ "enabled": true, "key": "shift", "ver": 5 })).unwrap().clean();
+        assert_eq!(s.web, crate::web::OPTS);
+        assert_eq!((s.web_dir.as_str(), s.web_open), ("", true));
+        let s = Settings { web: vec!["web-kakao".into(), "x".into(), "web-save".into()], web_dir: " 상대 ".into(), ..Default::default() }.clean();
+        assert_eq!(s.web, ["web-save", "web-kakao"], "정해 둔 순서로, 모르는 칸은 빼고");
+        assert_eq!(s.web_dir, "", "상대 경로는 버린다");
     }
 
     #[test]

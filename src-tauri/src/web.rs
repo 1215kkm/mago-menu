@@ -4,11 +4,14 @@
 //! 브라우저(크롬 · 엣지 · 웨일 · 파이어폭스)에서 그림 · 링크 · 주소창 주소를 Shift 를 누른 채 끌면 같은 고리가 뜬다.
 //! 끌기 데이터에서 주소(UniformResourceLocatorW · text/x-moz-url · 주소처럼 생긴 글)와 브라우저가 같이 넘겨 주는
 //! 그림 바이트(FileGroupDescriptorW + FileContents)를 읽는 것은 `ring.rs drop_win` 이다. 여기는 그 뒤의 일.
-//! - 그림: 저장(받은 그대로) · JPG · PNG · 카톡
-//! - 파일 링크(.pdf · .zip · .mp4 …): 받기 · 바로가기 · 카톡(파일)
+//! - 그림: 저장(받은 그대로) · JPG · PNG · 포토샵 · 피그마 · Word · 다른 프로그램으로 · 카톡
+//! - 파일 링크(.pdf · .zip · .mp4 …): 받기 · 바로가기 · 다른 프로그램으로 · 카톡(파일)
+//! 포토샵 · 피그마 · Word 칸은 이 PC 에 깔려 있을 때만 (10-29 CEO "피그마나 포토샵으로 바로 열리도록 … 워드같은 다른프로그램에도").
+//! 포토샵은 받은 파일을 바로 연다. 피그마 · Word 는 파일을 넘겨 열 길이 없어 그림을 클립보드에 담고 그 프로그램을 연다 — 그 안에서 Ctrl+V.
 //! - 그 밖의 링크 · 유튜브: 바로가기(.url) · 카톡(링크)
 //!
-//! 받은 것은 **다운로드 폴더**에, 같은 이름이 있으면 `(2)`. 인터넷에서 온 표시(Zone.Identifier)를 브라우저처럼 붙인다 — 받은 exe 를 열면 윈도우가 경고한다.
+//! 받은 것은 **다운로드 폴더**(설정에서 바꿀 수 있다 — Settings.web_dir)에, 같은 이름이 있으면 `(2)`.
+//! 저장한 뒤에는 그 폴더를 열어 파일을 골라 둔다 (Settings.web_open, 기본 켬 — 10-29 CEO "저장한후에 폴더가 바로 열리는걸 기본으로"). 인터넷에서 온 표시(Zone.Identifier)를 브라우저처럼 붙인다 — 받은 exe 를 열면 윈도우가 경고한다.
 //! 카톡: 카카오톡 PC 에는 다른 프로그램이 대화방에 보내는 길이 없다 → 보낼 파일(또는 링크 글)을 **클립보드에 담고 카카오톡을 연다**. 대화방에서 Ctrl+V.
 //! MAGO 가 직접 PC 밖으로 보내는 것은 없다 (보내는 것은 사람이 카톡에서).
 //! 유튜브 영상 받기는 아직 — 유튜브 약관이 받기를 막고 있어 대표님 결정 대기. 유튜브 주소는 바로가기 · 카톡만.
@@ -116,7 +119,25 @@ pub fn classify(url: &str, title: &str, name: &str, local: Option<PathBuf>) -> O
     Some(Web { url: if web_url || data_img { url } else { String::new() }, title, name, kind, bytes: None, local })
 }
 
-/// 고리 칸 (이름 · 설명은 ring::seg_of)
+/// 설정에서 켜고 끌 수 있는 칸 (ui/settings.js WEB 과 같게). 받기 · 바로가기는 늘 보인다
+pub const OPTS: &[&str] = &["web-save", "web-jpg", "web-png", "web-ps", "web-figma", "web-word", "web-with", "web-kakao"];
+
+/// 이 PC 에서 쓸 수 있는 칸인가 — 포토샵 · 피그마 · Word 는 깔려 있을 때만
+pub fn available(id: &str) -> bool {
+    match id {
+        #[cfg(windows)]
+        "web-ps" => apps::photoshop().is_some(),
+        #[cfg(windows)]
+        "web-figma" => apps::figma().is_some(),
+        #[cfg(windows)]
+        "web-word" => apps::word().is_some(),
+        #[cfg(not(windows))]
+        "web-ps" | "web-figma" | "web-word" => false,
+        _ => true,
+    }
+}
+
+/// 고리 칸 (이름 · 설명은 ring::seg_of). 깔린 프로그램 · 설정으로 거르는 것은 ring::web_plan
 pub fn ids(w: &Web) -> Vec<&'static str> {
     match w.kind {
         "image" => {
@@ -130,10 +151,15 @@ pub fn ids(w: &Web) -> Vec<&'static str> {
             if readable && e != "png" {
                 v.push("web-png");
             }
-            v.push("web-kakao");
+            v.push("web-ps");
+            // 피그마 · Word 는 그림을 클립보드에 그려 넣어야 한다 — 읽을 수 있는 그림만
+            if readable {
+                v.extend(["web-figma", "web-word"]);
+            }
+            v.extend(["web-with", "web-kakao"]);
             v
         }
-        "file" => vec!["web-get", "web-url", "web-kakao"],
+        "file" => vec!["web-get", "web-url", "web-with", "web-kakao"],
         _ => vec!["web-url", "web-kakao"],
     }
 }
@@ -330,47 +356,77 @@ pub struct Did {
     pub note: String,
     /// 캐릭터 말풍선 (굵게 · 작게)
     pub say: (String, String),
+    /// 저장한 파일 — 폴더 열기에 쓴다 (카톡은 None: 카카오톡을 연다)
+    pub file: Option<PathBuf>,
+}
+
+/// 말풍선에 쓰는 폴더 이름 — 다운로드 폴더면 "다운로드 폴더", 아니면 그 폴더 이름
+pub fn place(dir: &Path) -> String {
+    if crate::outdir::downloads_dir().is_some_and(|d| same_dir(&d, dir)) {
+        return "다운로드 폴더".into();
+    }
+    format!("{} 폴더", dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string()))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let n = |p: &Path| p.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    n(a) == n(b)
+}
+
+/// 저장할 폴더 — 설정에 고른 폴더(없으면 만든다), 비었거나 못 쓰면 다운로드 폴더
+pub fn save_dir(chosen: &str) -> Result<PathBuf, String> {
+    let c = chosen.trim();
+    if !c.is_empty() {
+        let p = PathBuf::from(c);
+        if p.is_absolute() && std::fs::create_dir_all(&p).is_ok() {
+            return Ok(p);
+        }
+        crate::log(&format!("[웹] 고른 저장 폴더를 못 써서 다운로드 폴더로 — {c}"));
+    }
+    crate::outdir::downloads_dir().ok_or_else(|| "다운로드 폴더를 찾지 못했어요".into())
 }
 
 fn file_name(p: &Path) -> String {
     p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-pub fn run(w: &Web, target: &str, s_quality: u8, progress: &mut dyn FnMut(f64)) -> Result<Did, String> {
-    let down = crate::outdir::downloads_dir().ok_or("다운로드 폴더를 찾지 못했어요")?;
-    let saved = |p: &Path| Did { head: "저장함".into(), note: "다운로드 폴더".into(), say: ("다운로드 폴더에 저장했어요".into(), file_name(p)) };
+pub fn run(w: &Web, target: &str, s_quality: u8, down: &Path, progress: &mut dyn FnMut(f64)) -> Result<Did, String> {
+    let down = down.to_path_buf();
+    let at = place(&down);
+    let saved = |p: &Path| Did { head: "저장함".into(), note: at.clone(), say: (format!("{at}에 저장했어요"), file_name(p)), file: Some(p.to_path_buf()) };
     match target {
         "web-save" | "web-get" => fetch(w, &down, progress).map(|p| saved(&p)),
         "web-url" => shortcut(w, &down).map(|p| saved(&p)),
-        "web-jpg" | "web-png" => {
-            // 받은 그대로를 임시 폴더에 받아 두고 바꾼 것만 다운로드 폴더에
-            let tmp = std::env::temp_dir().join(format!("mago-web-{}-{}", std::process::id(), chrono::Local::now().timestamp_millis()));
-            let src = fetch(w, &tmp, &mut |f| progress(f * 0.8));
-            let r = src.and_then(|src| {
-                let req = crate::convert::ext_convert::ExtRequest {
-                    files: vec![src.to_string_lossy().into()],
-                    out_dir: down.to_string_lossy().into(),
-                    image_format: Some(target[4..].into()),
-                    audio_format: None,
-                    quality: Some(s_quality),
-                    bitrate: None,
-                    background: None,
-                    pdf_format: None,
-                    pdf_mode: None,
-                    pdf_dpi: None,
-                };
-                let r = crate::convert::ext_convert::run(&req, &mut |_, _, _| {})?;
-                match (r.outputs.first(), r.errors.first()) {
-                    (Some(o), _) => Ok(PathBuf::from(&o.file)),
-                    (None, Some(e)) => Err(e.error.clone()),
-                    _ => Err("바꾸지 못했어요".into()),
-                }
-            });
-            let _ = std::fs::remove_dir_all(&tmp);
-            r.map(|p| {
-                mark_from_web(&p, &w.url);
-                saved(&p)
-            })
+        "web-jpg" | "web-png" => fetch_as(w, &down, &target[4..], s_quality, progress).map(|p| saved(&p)),
+        "web-ps" => {
+            // 포토샵(CS6 도)이 못 여는 webp · avif 는 PNG 로 바꿔 저장하고 그것을 연다
+            let e = ext_of(&shown_name(w));
+            let p = if matches!(e.as_str(), "" | "jpg" | "jpeg" | "jfif" | "png" | "gif" | "bmp" | "psd" | "tif" | "tiff") {
+                fetch(w, &down, progress)?
+            } else {
+                fetch_as(w, &down, "png", s_quality, progress)?
+            };
+            #[cfg(windows)]
+            apps::open_with(&apps::photoshop().ok_or("포토샵을 찾지 못했어요")?, Some(&p))?;
+            Ok(Did { head: "포토샵으로".into(), note: at.clone(), say: ("포토샵으로 열었어요".into(), format!("{at}에도 저장했어요 · {}", file_name(&p))), file: None })
+        }
+        "web-figma" | "web-word" => {
+            let p = fetch(w, &down, progress)?;
+            let figma = target == "web-figma";
+            let (name, where_) = if figma { ("피그마", "피그마 캔버스에서") } else { ("Word", "Word 문서에서") };
+            #[cfg(windows)]
+            {
+                clip::image(&p)?;
+                let exe = if figma { apps::figma() } else { apps::word() };
+                apps::open_with(&exe.ok_or(format!("{name} 프로그램을 찾지 못했어요"))?, None)?;
+            }
+            Ok(Did { head: format!("{name}에 담음"), note: "Ctrl+V".into(), say: (format!("{where_} Ctrl+V"), format!("{name}을 열고 그림을 복사해 두었어요 · {at}에도 저장")), file: None })
+        }
+        "web-with" => {
+            let p = fetch(w, &down, progress)?;
+            #[cfg(windows)]
+            apps::choose(&p)?;
+            Ok(Did { head: "다른 프로그램".into(), note: at.clone(), say: ("고른 프로그램으로 열어요".into(), format!("{at}에 저장했어요 · {}", file_name(&p))), file: None })
         }
         "web-kakao" => {
             // 그림 · 파일은 받아서 파일로, 링크는 주소 글로 (카톡이 미리 보기를 붙인다)
@@ -389,12 +445,127 @@ pub fn run(w: &Web, target: &str, s_quality: u8, progress: &mut dyn FnMut(f64)) 
             #[cfg(not(windows))]
             let opened = false;
             Ok(if opened {
-                Did { head: "카톡에 담음".into(), note: "Ctrl+V".into(), say: ("보낼 대화방에서 Ctrl+V".into(), format!("카카오톡을 열었어요 · {what}")) }
+                Did { head: "카톡에 담음".into(), note: "Ctrl+V".into(), say: ("보낼 대화방에서 Ctrl+V".into(), format!("카카오톡을 열었어요 · {what}")), file: None }
             } else {
-                Did { head: "복사해 둠".into(), note: "Ctrl+V".into(), say: ("카카오톡을 찾지 못했어요".into(), "복사해 두었어요 — 붙여 넣을 곳에서 Ctrl+V".into()) }
+                Did { head: "복사해 둠".into(), note: "Ctrl+V".into(), say: ("카카오톡을 찾지 못했어요".into(), "복사해 두었어요 — 붙여 넣을 곳에서 Ctrl+V".into()), file: None }
             })
         }
         _ => Err(format!("모르는 칸이에요: {target}")),
+    }
+}
+
+/// 받아서 `fmt`(jpg · png)로 바꾼 것만 `dir` 에 — 받은 그대로는 임시 폴더에 두었다 지운다
+fn fetch_as(w: &Web, dir: &Path, fmt: &str, quality: u8, progress: &mut dyn FnMut(f64)) -> Result<PathBuf, String> {
+    let tmp = std::env::temp_dir().join(format!("mago-web-{}-{}", std::process::id(), chrono::Local::now().timestamp_millis()));
+    let src = fetch(w, &tmp, &mut |f| progress(f * 0.8));
+    let r = src.and_then(|src| {
+        let req = crate::convert::ext_convert::ExtRequest {
+            files: vec![src.to_string_lossy().into()],
+            out_dir: dir.to_string_lossy().into(),
+            image_format: Some(fmt.into()),
+            audio_format: None,
+            quality: Some(quality),
+            bitrate: None,
+            background: None,
+            pdf_format: None,
+            pdf_mode: None,
+            pdf_dpi: None,
+        };
+        let r = crate::convert::ext_convert::run(&req, &mut |_, _, _| {})?;
+        match (r.outputs.first(), r.errors.first()) {
+            (Some(o), _) => Ok(PathBuf::from(&o.file)),
+            (None, Some(e)) => Err(e.error.clone()),
+            _ => Err("바꾸지 못했어요".into()),
+        }
+    });
+    let _ = std::fs::remove_dir_all(&tmp);
+    let p = r?;
+    mark_from_web(&p, &w.url);
+    Ok(p)
+}
+
+/// 탐색기로 그 파일이 있는 폴더를 열고 파일을 골라 둔다. 경로에 빈칸이 있어도 되게 `/select,"…"` 를 그대로 넘긴다
+pub fn reveal(p: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", p.display())).spawn().map(|_| ()).map_err(|e| format!("탐색기를 열지 못했어요: {e}"))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = p;
+        Err("윈도우에서만 돼요".into())
+    }
+}
+
+// ── 설정 창: 저장 폴더 ──────────────────────────────────────────────────────────
+
+/// 설정 창이 처음에 받는 것 — 판 번호 · 다운로드 폴더 (저장 폴더를 안 골랐을 때 보여 줄 곳)
+#[tauri::command]
+pub fn app_info(app: tauri::AppHandle) -> serde_json::Value {
+    serde_json::json!({
+        "version": app.package_info().version.to_string(),
+        "downloads": crate::outdir::downloads_dir().map(|d| d.display().to_string()).unwrap_or_default(),
+        // 이 PC 에 없는 프로그램 칸은 설정에서 "없음" 으로 보인다
+        "missing": OPTS.iter().filter(|id| !available(id)).collect::<Vec<_>>(),
+    })
+}
+
+/// [폴더 바꾸기] — 윈도우 폴더 고르기 창. 고르지 않고 닫으면 None
+#[tauri::command]
+pub async fn web_folder_pick(app: tauri::AppHandle, current: String) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let start = save_dir(&current)?;
+    let owner = app.get_webview_window("settings").and_then(|w| w.hwnd().ok()).map(|h| h.0 as isize).unwrap_or(0);
+    // 폴더 고르기 창은 COM(STA) 스레드에서 — 화면 스레드를 막지 않게 따로 띄운다
+    let got = tauri::async_runtime::spawn_blocking(move || std::thread::spawn(move || pick::folder(owner, &start)).join().ok().flatten())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(got.map(|p| p.display().to_string()))
+}
+
+/// [폴더 열기] — 지금 저장 폴더를 탐색기로
+#[tauri::command]
+pub fn web_folder_open(current: String) -> Result<(), String> {
+    let d = save_dir(&current)?;
+    std::process::Command::new("explorer").arg(&d).spawn().map(|_| ()).map_err(|e| format!("탐색기를 열지 못했어요: {e}"))
+}
+
+mod pick {
+    use std::path::{Path, PathBuf};
+
+    #[cfg(windows)]
+    pub fn folder(owner: isize, start: &Path) -> Option<PathBuf> {
+        use windows::core::HSTRING;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+        use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH};
+        unsafe {
+            let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+            let got = (|| {
+                let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+                d.SetOptions(d.GetOptions().ok()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST).ok()?;
+                let _ = d.SetTitle(&HSTRING::from("인터넷에서 끌어 받은 것을 저장할 폴더"));
+                let _ = d.SetOkButtonLabel(&HSTRING::from("이 폴더로"));
+                if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(start.as_os_str()), None) {
+                    let _ = d.SetFolder(&item);
+                }
+                d.Show(Some(HWND(owner as *mut _))).ok()?;
+                let name = d.GetResult().ok()?.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+                let s = name.to_string().ok();
+                CoTaskMemFree(Some(name.0 as *const _));
+                s.map(PathBuf::from)
+            })();
+            if init {
+                CoUninitialize();
+            }
+            got
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn folder(_owner: isize, _start: &Path) -> Option<PathBuf> {
+        None
     }
 }
 
@@ -543,9 +714,42 @@ pub mod clip {
 
     const CF_UNICODETEXT: u32 = 13;
     const CF_HDROP: u32 = 15;
+    const CF_DIB: u32 = 8;
 
-    /// 바이트를 그 형식으로 클립보드에. 클립보드의 주인이 될 보이지 않는 창을 잠깐 만든다 (주인 없이 비우면 넣기가 실패한다)
     fn put(format: u32, data: &[u8]) -> Result<(), String> {
+        put_all(&[(format, data.to_vec())])
+    }
+
+    /// 그림을 클립보드에 — 피그마 · Word 가 Ctrl+V 로 받는 형식 둘 다 ("PNG" 는 투명 그대로, CF_DIB 는 어디서나)
+    pub fn image(p: &std::path::Path) -> Result<(), String> {
+        let img = image::open(p).map_err(|e| format!("그림을 읽지 못했어요: {e}"))?.to_rgba8();
+        let (w, h) = img.dimensions();
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img.clone()).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| format!("그림을 담지 못했어요: {e}"))?;
+        // BITMAPINFOHEADER(40) + 아래 줄부터 BGRA
+        let mut dib = Vec::with_capacity(40 + (w * h * 4) as usize);
+        for v in [40u32, w] {
+            dib.extend_from_slice(&v.to_le_bytes());
+        }
+        dib.extend_from_slice(&(h as i32).to_le_bytes());
+        dib.extend_from_slice(&1u16.to_le_bytes());
+        dib.extend_from_slice(&32u16.to_le_bytes());
+        for v in [0u32, w * h * 4, 0, 0, 0, 0] {
+            dib.extend_from_slice(&v.to_le_bytes());
+        }
+        for y in (0..h).rev() {
+            for x in 0..w {
+                let [r, g, b, a] = img.get_pixel(x, y).0;
+                dib.extend_from_slice(&[b, g, r, a]);
+            }
+        }
+        let name: Vec<u16> = "PNG\0".encode_utf16().collect();
+        let cf_png = unsafe { windows_sys::Win32::System::DataExchange::RegisterClipboardFormatW(name.as_ptr()) };
+        put_all(&[(cf_png, png), (CF_DIB, dib)])
+    }
+
+    /// 바이트를 그 형식들로 클립보드에. 클립보드의 주인이 될 보이지 않는 창을 잠깐 만든다 (주인 없이 비우면 넣기가 실패한다)
+    fn put_all(items: &[(u32, Vec<u8>)]) -> Result<(), String> {
         unsafe {
             let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
             let h = CreateWindowExW(0, class.as_ptr(), std::ptr::null(), 0, 0, 0, 0, 0, HWND_MESSAGE, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null());
@@ -565,17 +769,21 @@ pub mod clip {
                 return Err("클립보드를 쓰지 못했어요".into());
             }
             EmptyClipboard();
-            let g = GlobalAlloc(GMEM_MOVEABLE, data.len());
-            let ok = !g.is_null() && {
-                let p = GlobalLock(g) as *mut u8;
-                if !p.is_null() {
-                    std::ptr::copy_nonoverlapping(data.as_ptr(), p, data.len());
-                    GlobalUnlock(g);
+            let mut ok = true;
+            for (format, data) in items {
+                let g = GlobalAlloc(GMEM_MOVEABLE, data.len());
+                let one = !g.is_null() && {
+                    let p = GlobalLock(g) as *mut u8;
+                    if !p.is_null() {
+                        std::ptr::copy_nonoverlapping(data.as_ptr(), p, data.len());
+                        GlobalUnlock(g);
+                    }
+                    !p.is_null() && !SetClipboardData(*format, g).is_null()
+                };
+                if !one && !g.is_null() {
+                    GlobalFree(g);
                 }
-                !p.is_null() && !SetClipboardData(format, g).is_null()
-            };
-            if !ok && !g.is_null() {
-                GlobalFree(g);
+                ok &= one;
             }
             CloseClipboard();
             if !h.is_null() {
@@ -627,6 +835,73 @@ pub mod clip {
             CloseClipboard();
             out
         }
+    }
+}
+
+// ── 포토샵 · 피그마 · Word · 다른 프로그램으로 ──────────────────────────────────
+
+#[cfg(windows)]
+mod apps {
+    use std::path::{Path, PathBuf};
+
+    /// 윈도우가 프로그램 이름으로 찾는 자리 (App Paths) — 시작 메뉴 "실행" 과 같은 곳
+    fn app_path(exe: &str) -> Option<PathBuf> {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        for (root, key) in [
+            (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"),
+            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths"),
+        ] {
+            let Ok(k) = RegKey::predef(root).open_subkey(format!("{key}\\{exe}")) else { continue };
+            let v: String = k.get_value("").unwrap_or_default();
+            let p = PathBuf::from(v.trim().trim_matches('"'));
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    pub fn photoshop() -> Option<PathBuf> {
+        app_path("Photoshop.exe").or_else(|| {
+            // App Paths 가 없는 판 — Adobe 폴더에서 이름 순으로 마지막(대개 가장 새것)
+            let mut v: Vec<PathBuf> = std::fs::read_dir(r"C:\Program Files\Adobe").ok()?.flatten().map(|d| d.path().join("Photoshop.exe")).filter(|p| p.is_file()).collect();
+            v.sort();
+            v.pop()
+        })
+    }
+
+    pub fn word() -> Option<PathBuf> {
+        app_path("WINWORD.EXE")
+    }
+
+    /// 피그마 데스크톱 — 사용자 폴더에 깔린다
+    pub fn figma() -> Option<PathBuf> {
+        let local = std::env::var_os("LOCALAPPDATA").map(|l| PathBuf::from(l).join("Figma").join("Figma.exe"));
+        local.filter(|p| p.is_file()).or_else(|| app_path("Figma.exe"))
+    }
+
+    /// 그 프로그램을 연다 (파일이 있으면 그 파일로). 켜져 있으면 그 창이 앞으로 나온다
+    pub fn open_with(exe: &Path, file: Option<&Path>) -> Result<(), String> {
+        let mut c = std::process::Command::new(exe);
+        if let Some(f) = file {
+            c.arg(f);
+        }
+        c.spawn().map(|_| crate::log(&format!("[웹] 엶 {}", exe.display()))).map_err(|e| format!("프로그램을 열지 못했어요: {e}"))
+    }
+
+    /// 윈도우의 "연결 프로그램" 창 — 고른 프로그램으로 연다 (기본 앱은 바꾸지 않는다)
+    pub fn choose(file: &Path) -> Result<(), String> {
+        use windows::core::HSTRING;
+        use windows::Win32::UI::Shell::{SHOpenWithDialog, OAIF_EXEC, OAIF_HIDE_REGISTRATION, OPENASINFO};
+        let f = HSTRING::from(file.as_os_str());
+        let info = OPENASINFO { pcszFile: windows::core::PCWSTR(f.as_ptr()), pcszClass: windows::core::PCWSTR::null(), oaifInFlags: OAIF_EXEC | OAIF_HIDE_REGISTRATION };
+        // 창을 닫고 고르지 않아도 오류가 온다 — 저장은 이미 했으니 실패로 치지 않는다
+        if let Err(e) = unsafe { SHOpenWithDialog(None, &info) } {
+            crate::log(&format!("[웹] 연결 프로그램 창: {e}"));
+        }
+        Ok(())
     }
 }
 
@@ -707,13 +982,27 @@ mod tests {
         assert_eq!(classify("javascript:x", "", "a.png", None).unwrap().url, "", "이상한 주소는 버리고 내용만");
     }
 
+    /// 설정의 저장 폴더 — 고른 폴더(없으면 만든다), 비었거나 상대 경로면 다운로드 폴더
+    #[test]
+    fn the_save_folder_comes_from_settings() {
+        let down = crate::outdir::downloads_dir().unwrap();
+        assert_eq!(save_dir("").unwrap(), down);
+        assert_eq!(save_dir("상대/경로").unwrap(), down, "상대 경로는 못 쓴다");
+        let mine = std::env::temp_dir().join(format!("mago-web-dir-{}", std::process::id())).join("받은 그림");
+        assert_eq!(save_dir(&mine.to_string_lossy()).unwrap(), mine);
+        assert!(mine.is_dir(), "없는 폴더는 만든다");
+        assert_eq!(place(&down), "다운로드 폴더");
+        assert_eq!(place(&mine), "받은 그림 폴더");
+        let _ = std::fs::remove_dir_all(mine.parent().unwrap());
+    }
+
     #[test]
     fn cells_for_each_kind() {
         let w = |url: &str, name: &str| classify(url, "", name, None).unwrap();
-        assert_eq!(ids(&w("https://a.com/x", "a.webp")), ["web-save", "web-jpg", "web-png", "web-kakao"]);
-        assert_eq!(ids(&w("https://a.com/x", "a.jpg")), ["web-save", "web-png", "web-kakao"], "이미 JPG 면 JPG 칸은 없다");
-        assert_eq!(ids(&w("https://a.com/x", "a.avif")), ["web-save", "web-kakao"], "못 읽는 그림은 받은 그대로만");
-        assert_eq!(ids(&w("https://a.com/a.zip", "")), ["web-get", "web-url", "web-kakao"]);
+        assert_eq!(ids(&w("https://a.com/x", "a.webp")), ["web-save", "web-jpg", "web-png", "web-ps", "web-figma", "web-word", "web-with", "web-kakao"]);
+        assert_eq!(ids(&w("https://a.com/x", "a.jpg")), ["web-save", "web-png", "web-ps", "web-figma", "web-word", "web-with", "web-kakao"], "이미 JPG 면 JPG 칸은 없다");
+        assert_eq!(ids(&w("https://a.com/x", "a.avif")), ["web-save", "web-ps", "web-with", "web-kakao"], "못 읽는 그림은 바꾸기 · 클립보드 칸이 없다");
+        assert_eq!(ids(&w("https://a.com/a.zip", "")), ["web-get", "web-url", "web-with", "web-kakao"]);
         assert_eq!(ids(&w("https://www.youtube.com/watch?v=1", "")), ["web-url", "web-kakao"]);
         assert_eq!(title(&w("https://www.naver.com/news", "")), "naver.com");
         assert_eq!(title(&w("https://a.com/a.zip", "")), "ZIP 파일");

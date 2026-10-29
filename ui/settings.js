@@ -20,9 +20,12 @@ const GIF_SPEEDS = [{ id: 60, label: '빠르게 0.06초' }, { id: 100, label: '�
 const CHARS = [{ id: 'cat', label: '검은 고양이', img: './mago/cat/idle.webp', eats: '고양이가' }, { id: 'trash', label: '쓰레기통', img: './mago/idle.webp', eats: '쓰레기통이' }];
 const PDF = [{ id: 'jpg-pages', label: 'JPG 쪽마다' }, { id: 'jpg-one', label: 'JPG 한 장으로' }, { id: 'png-pages', label: 'PNG 쪽마다' }, { id: 'png-one', label: 'PNG 한 장으로' }];
 // 여러 종류를 같이 끌었을 때 · Word · 엑셀 · 한글 (Rust ring::MIX_OPTS = mix::OPTS 와 같게)
+// 브라우저에서 끌었을 때 (Rust web::OPTS 와 같게) — 포토샵 · 피그마 · Word 는 이 PC 에 깔려 있을 때만 고리에 보인다
+const WEB = [{ id: 'web-save', label: '저장' }, { id: 'web-jpg', label: 'JPG 로' }, { id: 'web-png', label: 'PNG 로' }, { id: 'web-ps', label: '포토샵' }, { id: 'web-figma', label: '피그마' },
+  { id: 'web-word', label: 'Word' }, { id: 'web-with', label: '다른 프로그램으로' }, { id: 'web-kakao', label: '카톡' }];
 const MIX = [{ id: 'mix-pdf', label: 'PDF 하나로' }, { id: 'mix-pdfs', label: 'PDF 파일마다' }, { id: 'mix-jpg', label: 'JPG 한 장으로' }, { id: 'mix-jpgs', label: 'JPG 쪽마다' }];
 
-const S = { s: null, run: false, err: null, toast: null, m: null };
+const S = { s: null, run: false, err: null, toast: null, m: null, info: null, picking: false };
 const app = document.getElementById('app');
 
 function el(tag, attrs, kids) {
@@ -43,9 +46,10 @@ function seg(items, cur, pick) {
   }, [].concat(it.label))));
 }
 
-/** 여러 개 고르기 — 누를 때마다 켜고 끈다 */
-function chips(items, on, toggle) {
+/** 여러 개 고르기 — 누를 때마다 켜고 끈다. missing 은 이 PC 에 없는 것 (눌러도 안 되고 "없음" 으로 보인다) */
+function chips(items, on, toggle, missing = []) {
   return el('div', { class: 'chips' }, items.map((it) => {
+    if (missing.includes(it.id)) return el('button', { type: 'button', class: 'chip none', disabled: true, 'aria-label': `${it.label} — 이 PC 에 없어요` }, [it.label, el('small', {}, [' 이 PC 에 없음'])]);
     const a = on.includes(it.id);
     return el('button', { type: 'button', class: `chip${a ? ' on' : ''}`, 'aria-pressed': a ? 'true' : 'false', onclick: () => toggle(it.id, !a) }, [a ? '✓ ' : '', it.label]);
   }));
@@ -92,7 +96,7 @@ function render() {
   const toggle = (field) => (id, add) => set({ [field]: add ? s[field].concat(id) : s[field].filter((x) => x !== id) });
 
   const head = el('header', { class: 'head' }, [
-    el('div', {}, [el('h1', {}, ['MAGO']), el('p', { class: 'muted' }, ['탐색기에서 ', el('kbd', {}, [keyName]), ' 를 누른 채 파일을 끌면 커서 둘레에 원형 메뉴가 떠요.'])]),
+    el('div', {}, [el('h1', {}, ['MAGO', S.info ? el('span', { class: 'ver' }, [`버전 ${S.info.version}`]) : null]), el('p', { class: 'muted' }, ['탐색기에서 ', el('kbd', {}, [keyName]), ' 를 누른 채 파일을 끌면 커서 둘레에 원형 메뉴가 떠요.'])]),
     el('span', { class: `state${s.enabled ? ' on' : ''}` }, [s.enabled ? '켜져 있어요' : '꺼져 있어요']),
   ]);
 
@@ -122,6 +126,26 @@ function render() {
     el('p', { class: 'hint' }, [`메뉴 위에 놓은 파일은 복사로만 받아서 원본이 지워지거나 옮겨지지 않아요. ${who.label}에게 먹인 파일만 윈도우 휴지통으로 가요.`]),
   ]);
 
+  // 10-29 CEO "저장한후에 폴더가 바로 열리는걸 기본으로 해주고 저장폴더는 설정에서 바꿀수 있게"
+  const info = S.info || {};
+  const folder = s.webDir || info.downloads || '다운로드 폴더';
+  const web = el('section', { class: 'card' }, [
+    el('h2', {}, ['인터넷에서 끌어 받기']),
+    el('p', { class: 'muted' }, ['브라우저에서 그림 · 링크를 ', el('kbd', {}, [keyName]), ' 를 누른 채 끌면 같은 원형 메뉴가 떠요.']),
+    row('저장 폴더', el('div', { class: 'folder' }, [
+      el('span', { class: 'path' }, [folder, s.webDir ? null : el('small', {}, [' (다운로드 폴더)'])]),
+      el('div', { class: 'btns' }, [
+        el('button', { type: 'button', class: 'btn', disabled: S.picking, onclick: pickFolder }, [S.picking ? '고르는 중…' : '폴더 바꾸기']),
+        el('button', { type: 'button', class: 'btn', onclick: () => invoke('web_folder_open', { current: s.webDir }).catch((e) => toast(String(e), true)) }, ['열기']),
+        s.webDir ? el('button', { type: 'button', class: 'btn ghost', onclick: () => set({ webDir: '' }, '다운로드 폴더에 저장해요.') }, ['다운로드 폴더로']) : null,
+      ]),
+    ])),
+    row('저장한 뒤', seg([{ id: 'on', label: '폴더 열기' }, { id: 'off', label: '그대로 두기' }], s.webOpen ? 'on' : 'off',
+      (v) => set({ webOpen: v === 'on' }, v === 'on' ? '저장하면 그 폴더를 열어 파일을 골라 둬요.' : '저장해도 폴더를 열지 않아요.'))),
+    row('보일 칸', chips(WEB, s.web || [], toggle('web'), info.missing || [])),
+    el('p', { class: 'hint' }, ['포토샵은 받은 그림을 바로 열어요. 피그마 · Word 는 그림을 복사해 둔 채 열리니 그 안에서 Ctrl+V. 다른 프로그램으로는 열 프로그램을 고르는 윈도우 창이 떠요. 받기 · 바로가기 칸은 링크를 끌 때 늘 보여요.']),
+  ]);
+
   const m = S.m;
   const secret = m && el('section', { class: 'card' }, [
     el('h2', {}, ['숨은 메뉴']),
@@ -148,7 +172,7 @@ function render() {
     ]),
     el('p', { class: 'hint' }, ['여러 종류를 같이: 그림 · PDF · 글(TXT) · Word · 엑셀 · 한글을 한꺼번에 끌면 메뉴 위에 번호 목록이 떠요. 그 순서대로 PDF 하나 · JPG 한 장으로 잇거나, 파일마다 PDF · 쪽마다 JPG 로 만들어요. Word · 엑셀 · 한글 파일은 이 PC 에 깔린 그 프로그램을 화면에 띄우지 않고 써요 (없으면 docx · xlsx · hwpx 는 글만 옮겨요).']),
     el('p', { class: 'hint' }, ['GIF 칸: 여러 장을 같이 끌어 놓으면 이름 순서(1, 2, … 10)로 이어 움직이는 GIF 하나를 만들어요. 동작이 칸칸이 그려진 한 장을 놓으면 칸을 나눠 움직여요. 긴 변은 800px 까지 줄여요.']),
-    el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 누끼(배경을 지운 투명 PNG — 처음 한 번 누끼 도구 179MB 를 받고, 사진은 PC 밖으로 나가지 않아요), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로), 글(TXT) → PDF · 한글 · Word · 엑셀(탭마다 칸). 브라우저에서 그림 · 링크를 끌면 다운로드 폴더에 저장 · 바로가기 · 카톡으로(복사해 두고 카카오톡을 열어요).']),
+    el('p', { class: 'hint' }, ['바꿀 수 있는 것: 그림 png · jpg · webp · bmp · gif 끼리, 정사각(인스타 1080×1080, 가운데를 잘라요), 1MB 이하 JPG(카톡·메일용), 누끼(배경을 지운 투명 PNG — 처음 한 번 누끼 도구 179MB 를 받고, 사진은 PC 밖으로 나가지 않아요), 소리 wav ↔ mp3, PDF → jpg · png (쪽마다 · 한 장으로), 글(TXT) → PDF · 한글 · Word · 엑셀(탭마다 칸). 브라우저에서 그림 · 링크를 끌면 저장 · 바로가기 · 포토샵 · 피그마 · Word · 카톡으로(위 「인터넷에서 끌어 받기」).']),
   ]);
 
   const foot = el('footer', { class: 'foot' }, [
@@ -156,12 +180,27 @@ function render() {
     el('button', { type: 'button', class: 'btn ghost', onclick: () => invoke('app_quit') }, ['프로그램 끝내기']),
   ]);
 
-  const kids = [head, main, secret, how, foot].filter(Boolean);
+  const kids = [head, main, web, secret, how, foot].filter(Boolean);
   if (S.toast) kids.push(el('div', { class: `toast${S.toast.bad ? ' bad' : ''}`, role: 'status' }, [S.toast.msg]));
   app.replaceChildren(...kids);
 }
 
+/** [폴더 바꾸기] — 윈도우 폴더 고르기 창 (닫으면 그대로) */
+async function pickFolder() {
+  if (S.picking) return;
+  S.picking = true; render();
+  try {
+    const got = await invoke('web_folder_pick', { current: S.s.webDir });
+    S.picking = false;
+    if (got) await set({ webDir: got }, `이제 ${got.split(/[\\/]/).pop() || got} 폴더에 저장해요.`);
+    else render();
+  } catch (e) { S.picking = false; toast(String(e), true); }
+}
+
 (async () => {
+  try {
+    S.info = await invoke('app_info');
+  } catch (e) { console.error(e); }
   try {
     S.s = await invoke('qconv_settings_get');
     S.run = (await invoke('autostart_get')).on;

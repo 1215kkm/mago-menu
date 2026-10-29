@@ -41,3 +41,15 @@ kbd { display: inline-block; padding: 1px 7px; border: 1px solid var(--light-bor
 /* 캐릭터 고르기 — 버튼에 그 캐릭터 그림을 같이 (그림은 오른쪽을 보고 있어 고리 화면처럼 뒤집는다) */
 .seg button:has(.who) { display: inline-flex; align-items: center; gap: 8px; padding: 4px 14px 4px 8px; }
 .seg .who { height: 36px; width: auto; transform: scaleX(-1); }
+/* 판 번호 (10-29 CEO "설정창에 버전번호가 안나오고 있어") */
+.head h1 .ver { margin-left: 10px; padding: 2px 8px; border-radius: 999px; background: var(--light-bg); border: 1px solid var(--light-border); color: var(--text-muted); font-size: .8rem; font-weight: 700; vertical-align: middle; }
+/* 저장 폴더 — 경로가 길어도 줄을 넘기지 않고 줄바꿈 */
+.folder { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.folder .path { font-weight: 700; word-break: break-all; }
+.folder .path small, .chip small { font-weight: 500; color: var(--text-muted); }
+.folder .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn:disabled { opacity: .6; cursor: default; }
+.chip.none { cursor: default; color: var(--text-muted); background: var(--light-bg); border-style: dashed; }
+.chip.none:hover { border-color: var(--light-border); }
+/* 줄이 많은 설정 — 마우스가 올라간 줄의 제목을 짙게 (UIUX 58) */
+.row:hover > .lab { color: var(--text-dark); font-weight: 700; }

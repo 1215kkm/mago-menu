@@ -112,6 +112,29 @@ fn trying(args: &[String]) -> bool {
 fn try_one(app: tauri::AppHandle, target: String, files: Vec<String>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(800));
+        // 설정 창만 화면 밖에 다시 만들어 띄워 둔다 — MAGO_CDP_PORT 의 원격 디버깅으로 창 안을 본다 (sheet.rs 와 같게). 3분 뒤 끝
+        if target == "settings-view" {
+            // 마지막 창이 닫히면 앱이 끝난다 — 바꿔 끼우는 동안 붙잡아 둘 숨은 창
+            let _keep = tauri::WebviewWindowBuilder::new(&app, "keep", tauri::WebviewUrl::External("about:blank".parse().expect("주소"))).visible(false).build();
+            if let Some(w) = app.get_webview_window("settings") {
+                let _ = w.destroy();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let port = std::env::var("MAGO_CDP_PORT").unwrap_or_else(|_| "9333".into());
+            let made = tauri::WebviewWindowBuilder::new(&app, "settings", tauri::WebviewUrl::App("index.html".into()))
+                .inner_size(760.0, 820.0)
+                .position(-6000.0, -6000.0)
+                .skip_taskbar(true)
+                .focused(false)
+                .disable_drag_drop_handler()
+                .additional_browser_args(&format!("--remote-debugging-port={port}"))
+                .data_directory(std::env::temp_dir().join(format!("mago-cdp-{port}")))
+                .build();
+            log(&format!("[시험] 설정 창 {:?}", made.err()));
+            std::thread::sleep(std::time::Duration::from_secs(180));
+            app.exit(0);
+            return;
+        }
         if target.starts_with("mix-") {
             sheet::QUIET.store(true, std::sync::atomic::Ordering::SeqCst);
             let t = std::time::Instant::now();
@@ -205,6 +228,9 @@ pub fn run() {
             sheet::sheet_cancel,
             sheet::sheet_reveal,
             sheet::sheet_close,
+            web::app_info,
+            web::web_folder_pick,
+            web::web_folder_open,
             autostart_get,
             autostart_set,
             app_quit,
