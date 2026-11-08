@@ -98,8 +98,27 @@ fn stem(src: &Path) -> String {
 /// 11-04 대표님 PC 에서 .hwp 를 [JPG 한 장] · [PDF 하나로] 에 놓았을 때 3분 동안 멈췄고, 숨은 한글이 남았다.
 /// 그래서 한글은 1분만 기다리고, **이번에 새로 뜬 한글만** 끈다 (대표님이 쓰던 한글은 그대로).
 fn with_timeout(src: &Path, dst: &Path, ext: &str) -> Result<(), String> {
+    if HWP_EXT.contains(&ext) {
+        let ext2 = ext.to_string();
+        return in_temp(src, dst, move |s, d| guarded(true, move || com::export(&s, &d, &ext2)));
+    }
     let (src, dst, ext2) = (src.to_path_buf(), dst.to_path_buf(), ext.to_string());
-    guarded(HWP_EXT.contains(&ext), move || com::export(&src, &dst, &ext2))
+    guarded(false, move || com::export(&src, &dst, &ext2))
+}
+
+/// 한글은 **임시 폴더 밖(D: 드라이브 등)의 파일**을 자동화로 열거나 저장하면 숨은 한글에 확인 창(HNC_DIALOG "한글")을 띄우고 멈춘다
+/// (11-09 확인: 같은 Word 파일이 임시 폴더에서는 3초, D:\ 에서는 확인 창에서 멈춤 — 대표님 PC 의 D:\19_test\… 가 그랬다).
+/// 그래서 원본을 임시 폴더에 복사해 거기서 바꾸고, 다 된 결과만 `dst` 로 가져온다. 원본은 읽기만 한다
+fn in_temp(src: &Path, dst: &Path, job: impl FnOnce(std::path::PathBuf, std::path::PathBuf) -> Result<(), String>) -> Result<(), String> {
+    let tmp = std::env::temp_dir().join(format!("mago-hwp-{}-{}", std::process::id(), chrono::Local::now().timestamp_micros()));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("임시 폴더를 만들지 못했어요: {e}"))?;
+    let name = |p: &Path, alt: &str| p.file_name().map(|f| f.to_os_string()).unwrap_or_else(|| alt.into());
+    let (ts, td) = (tmp.join(name(src, "원본")), tmp.join(name(dst, "결과")));
+    let r = std::fs::copy(src, &ts).map_err(|e| format!("파일을 읽지 못했어요: {e}")).and_then(|_| job(ts, td.clone())).and_then(|_| {
+        std::fs::copy(&td, dst).map(|_| ()).map_err(|e| format!("만든 파일을 옮기지 못했어요: {e}"))
+    });
+    let _ = std::fs::remove_dir_all(&tmp);
+    r
 }
 
 fn guarded(hangul: bool, job: impl FnOnce() -> Result<(), String> + Send + 'static) -> Result<(), String> {
@@ -116,6 +135,8 @@ fn guarded(hangul: bool, job: impl FnOnce() -> Result<(), String> + Send + 'stat
         Ok(r) => r,
         Err(_) if hangul => {
             let ours: Vec<u32> = hwp_pids().into_iter().filter(|p| !before.contains(p)).collect();
+            // 숨은 한글에 무슨 창이 떠 있었나 — 다음에 고칠 수 있게 기록
+            crate::log(&format!("[문서] 멈춘 한글의 창: {:?}", windows_of(&ours)));
             for p in &ours {
                 let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &p.to_string()]).output();
             }
@@ -123,6 +144,113 @@ fn guarded(hangul: bool, job: impl FnOnce() -> Result<(), String> + Send + 'stat
             Err("한글이 1분 넘게 대답하지 않아 그만뒀어요. 이 한글 판으로는 이 파일을 바꾸지 못하는 것 같아요.".to_string())
         }
         Err(_) => Err("프로그램이 3분 넘게 대답하지 않아요. 그 프로그램에 뜬 창이 있는지 봐 주세요.".to_string()),
+    }
+}
+
+/// 시험: MAGO_DOCX_DIR 의 Word 파일들을 차례로 한글로 — 멈추면 숨은 한글에 뜬 창을 MAGO_DOCX_DIR\창.txt 에 적는다
+#[cfg(all(test, windows))]
+#[test]
+#[ignore = "이 PC 의 한글을 띄운다 (보이지 않게) — 손으로"]
+fn word_files_in_a_folder_to_hwp() {
+    let Some(dir) = std::env::var_os("MAGO_DOCX_DIR").map(std::path::PathBuf::from) else { return };
+    let report = std::sync::Arc::new(Mutex::new(String::new()));
+    let before = hwp_pids();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (r2, d2, b2) = (report.clone(), done.clone(), before.clone());
+    let watch = std::thread::spawn(move || {
+        let mut k = 0;
+        while !d2.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(500));
+            k += 1;
+            if k % 20 == 0 {
+                let ours: Vec<u32> = hwp_pids().into_iter().filter(|p| !b2.contains(p)).collect();
+                if !ours.is_empty() {
+                    r2.lock().unwrap().push_str(&format!("  {}초: {:#?}\n", k / 2, windows_of(&ours)));
+                }
+            }
+        }
+    });
+    let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "docx" || e == "doc" || e == "hwp")).collect();
+    files.sort();
+    // MAGO_LOCK=1 — 첫 파일을 Word 로 열어 둔 채로 (사람이 Word 에서 보고 있을 때와 같게)
+    let mut locked = None;
+    if std::env::var_os("MAGO_LOCK").is_some() {
+        let (tx, rx) = mpsc::channel::<()>();
+        let f = files[0].clone();
+        let (ok_tx, ok_rx) = mpsc::channel();
+        let h = std::thread::spawn(move || com::hold_in_word(&f, ok_tx, rx));
+        report.lock().unwrap().push_str(&format!("Word 로 열어 둠: {:?}\n", ok_rx.recv()));
+        locked = Some((tx, h));
+    }
+    let out = dir.join("결과");
+    std::fs::create_dir_all(&out).unwrap();
+    for f in files {
+        let t = std::time::Instant::now();
+        report.lock().unwrap().push_str(&format!("▶ {}\n", f.file_name().unwrap().to_string_lossy()));
+        // 한글 파일은 PDF 로 (11-04 대표님이 멈췄던 것)
+        let r = if f.extension().is_some_and(|e| e == "hwp") {
+            let pdf = out.join(format!("{}.pdf", f.file_stem().unwrap().to_string_lossy()));
+            to_pdf(&f, &pdf).map(|h| format!("{h:?} {}B", std::fs::metadata(&pdf).map(|m| m.len()).unwrap_or(0)))
+        } else {
+            to_hwp(&f, &out).map(|o| format!("{}B", o.bytes))
+        };
+        report.lock().unwrap().push_str(&format!("  → {r:?} ({}초)\n", t.elapsed().as_secs()));
+    }
+    if let Some((tx, h)) = locked {
+        let _ = tx.send(());
+        let _ = h.join();
+    }
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = watch.join();
+    std::fs::write(dir.join("창.txt"), report.lock().unwrap().as_bytes()).unwrap();
+}
+
+/// 그 프로세스들의 창과 그 안의 글 ("종류 [제목] { 안의 글 · 단추 }") — 보이지 않는 창도 (읽기만 한다)
+pub fn windows_of(pids: &[u32]) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{EnumChildWindows, EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible};
+        fn text(h: HWND) -> (String, String) {
+            let (mut c, mut t) = ([0u16; 128], [0u16; 512]);
+            let (cn, tn) = unsafe { (GetClassNameW(h, c.as_mut_ptr(), 128), GetWindowTextW(h, t.as_mut_ptr(), 512)) };
+            (String::from_utf16_lossy(&c[..cn.max(0) as usize]), String::from_utf16_lossy(&t[..tn.max(0) as usize]))
+        }
+        struct Ctx {
+            pids: Vec<u32>,
+            out: Vec<String>,
+        }
+        unsafe extern "system" fn child(h: HWND, l: LPARAM) -> i32 {
+            let v = &mut *(l as *mut Vec<String>);
+            let (c, t) = text(h);
+            if !t.trim().is_empty() {
+                v.push(format!("{c}:{}", t.trim()));
+            }
+            1
+        }
+        unsafe extern "system" fn top(h: HWND, l: LPARAM) -> i32 {
+            let ctx = &mut *(l as *mut Ctx);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, &mut pid);
+            if ctx.pids.contains(&pid) {
+                let (c, t) = text(h);
+                let mut kids: Vec<String> = Vec::new();
+                EnumChildWindows(h, Some(child), &mut kids as *mut _ as LPARAM);
+                // 이름 없는 숨은 틀 창은 빼고, 보이거나 글이 있는 창만
+                if IsWindowVisible(h) != 0 || !t.is_empty() || !kids.is_empty() {
+                    ctx.out.push(format!("{c} [{t}] 보임={} {{ {} }}", IsWindowVisible(h) != 0, kids.iter().take(12).cloned().collect::<Vec<_>>().join(" · ")));
+                }
+            }
+            1
+        }
+        let mut ctx = Ctx { pids: pids.to_vec(), out: Vec::new() };
+        unsafe { EnumWindows(Some(top), &mut ctx as *mut _ as LPARAM) };
+        ctx.out
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pids;
+        vec![]
     }
 }
 
@@ -162,9 +290,7 @@ pub fn to_hwp(src: &Path, out_dir: &Path) -> Result<crate::convert::OutputFile, 
         return Err("이 PC 에 한글이 없어요".into());
     }
     let dst = crate::convert::convert::unique_path(out_dir, &format!("{}.hwp", stem(src)));
-    let s = std::path::absolute(src).map_err(|e| format!("파일 위치를 알 수 없어요: {e}"))?.to_string_lossy().to_string();
-    let d = std::path::absolute(&dst).map_err(|e| format!("저장할 곳을 알 수 없어요: {e}"))?.to_string_lossy().to_string();
-    guarded(true, move || com::to_hwp_job(&s, &d))?;
+    in_temp(src, &dst, |s, d| guarded(true, move || com::to_hwp_job(&s.to_string_lossy(), &d.to_string_lossy())))?;
     let bytes = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
     if bytes == 0 {
         let _ = std::fs::remove_file(&dst);
@@ -499,6 +625,28 @@ mod com {
             std::fs::copy(&docx, std::path::Path::new(&keep).join("표 시험.docx")).unwrap();
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 시험: 보이지 않는 새 Word 로 그 파일을 열어 두었다가 `stop` 이 오면 닫는다
+    #[cfg(test)]
+    pub fn hold_in_word(f: &Path, ok: std::sync::mpsc::Sender<Result<(), String>>, stop: std::sync::mpsc::Receiver<()>) {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        let app = match Obj::create("Word.Application") {
+            Ok(a) => a,
+            Err(e) => {
+                let _ = ok.send(Err(e));
+                return;
+            }
+        };
+        let doc = app.obj("Documents", vec![]).and_then(|d| d.obj("Open", vec![Var::str(&f.to_string_lossy())]));
+        let _ = ok.send(doc.as_ref().map(|_| ()).map_err(|e| e.clone()));
+        let _ = stop.recv();
+        if let Ok(d) = doc {
+            let _ = d.call("Close", vec![Var::i4(0)]);
+        }
+        let _ = app.call("Quit", vec![Var::i4(0)]);
     }
 
     /// 한글 문서 안의 표 수 (시험용)
