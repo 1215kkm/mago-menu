@@ -300,6 +300,44 @@ pub fn to_hwp(src: &Path, out_dir: &Path) -> Result<crate::convert::OutputFile, 
     Ok(crate::convert::OutputFile { source: src.to_string_lossy().into(), file: dst.to_string_lossy().into(), width: 0, height: 0, bytes, label: "한글".into() })
 }
 
+/// 한글 문서(hwp · hwpx) → Word — 이 PC 의 한글이 직접 열어 Word 형식으로 저장한다 (표가 그대로).
+/// 11-09 CEO "반대로 hwp도 워드파일로 변형할수있게 해줘". 한글 판마다 되는 형식이 달라 DOCX 를 먼저, 안 되면 DOC 로
+pub fn to_word(src: &Path, out_dir: &Path) -> Result<crate::convert::OutputFile, String> {
+    static ONE: Mutex<()> = Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !HWP_EXT.contains(&ext.as_str()) {
+        return Err(format!(".{ext} 는 Word 로 바꿀 수 없어요 (한글 파일만)"));
+    }
+    if !has_hangul() {
+        return Err("이 PC 에 한글이 없어요".into());
+    }
+    // 임시 폴더에서 (in_temp 와 같은 까닭 — 한글이 D: 의 파일에 확인 창을 띄운다). 만든 형식(docx/doc)에 따라 이름이 정해져 직접 한다
+    let tmp = std::env::temp_dir().join(format!("mago-hwp-{}-{}", std::process::id(), chrono::Local::now().timestamp_micros()));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("임시 폴더를 만들지 못했어요: {e}"))?;
+    let r = (|| {
+        let ts = tmp.join(format!("원본.{ext}"));
+        std::fs::copy(src, &ts).map_err(|e| format!("파일을 읽지 못했어요: {e}"))?;
+        let base = tmp.join("결과");
+        let (s, b, hwpx) = (ts.to_string_lossy().to_string(), base.to_string_lossy().to_string(), ext == "hwpx");
+        let made = std::sync::Arc::new(Mutex::new(String::new()));
+        let m2 = made.clone();
+        guarded(true, move || com::to_word_job(&s, &b, hwpx).map(|e| *m2.lock().unwrap() = e))?;
+        let out_ext = made.lock().unwrap().clone();
+        let made_file = tmp.join(format!("결과.{out_ext}"));
+        let bytes = std::fs::metadata(&made_file).map(|m| m.len()).unwrap_or(0);
+        if bytes == 0 {
+            return Err("한글이 Word 파일을 만들지 않았어요".to_string());
+        }
+        let dst = crate::convert::convert::unique_path(out_dir, &format!("{}.{out_ext}", stem(src)));
+        std::fs::copy(&made_file, &dst).map_err(|e| format!("만든 파일을 옮기지 못했어요: {e}"))?;
+        crate::log(&format!("[문서] 한글 → Word {} ({}KB)", dst.display(), bytes / 1024));
+        Ok(crate::convert::OutputFile { source: src.to_string_lossy().into(), file: dst.to_string_lossy().into(), width: 0, height: 0, bytes, label: "Word".into() })
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    r
+}
+
 // ── COM 자동화 ────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -619,12 +657,45 @@ mod com {
         let n = hwp_tables(&hwp_out.to_string_lossy()).unwrap();
         eprintln!("표 {n}개");
         assert_eq!(n, 1, "표 하나가 표로 남아야 한다");
+
+        // 반대로: 그 HWP → Word (11-09). 만든 Word 파일을 Word 로 열어 표 · 글자를 센다
+        let t = std::time::Instant::now();
+        let back = crate::office::to_word(&hwp_out, &dir).unwrap();
+        eprintln!("Word 저장: {} · {}B · {}ms", back.file, back.bytes, t.elapsed().as_millis());
+        assert!(back.file.ends_with("표 시험 (2).docx") || back.file.ends_with("표 시험.doc"), "원본 옆 · 같은 이름이면 (2): {}", back.file);
+        assert!(crate::office::to_word(&docx, &dir).is_err(), "한글 파일만");
+        let app = Obj::create("Word.Application").unwrap();
+        let _ = app.put("DisplayAlerts", Var::i4(0));
+        let d = app.obj("Documents", vec![]).unwrap().obj("Open", vec![Var::str(&back.file)]).unwrap();
+        let tables = d.obj("Tables", vec![]).unwrap().get("Count").unwrap().as_i32();
+        let text = d.obj("Content", vec![]).unwrap().get("Text").unwrap().as_string();
+        let _ = d.call("Close", vec![Var::i4(0)]);
+        let _ = app.call("Quit", vec![Var::i4(0)]);
+        eprintln!("Word 표 {tables:?}개 · 글 {:?}", text.chars().take(60).collect::<String>());
+        assert_eq!(tables, Some(1), "표 하나가 Word 에서도 표로");
+        assert!(text.contains("평가 표") && text.contains("칸3-4"));
+        if let Some(keep) = std::env::var_os("MAGO_KEEP") {
+            std::fs::copy(&back.file, std::path::Path::new(&keep).join(std::path::Path::new(&back.file).file_name().unwrap())).unwrap();
+        }
         // MAGO_KEEP=<폴더> 면 눈으로 볼 수 있게 남긴다
         if let Some(keep) = std::env::var_os("MAGO_KEEP") {
             std::fs::copy(&hwp_out, std::path::Path::new(&keep).join("표 시험.hwp")).unwrap();
             std::fs::copy(&docx, std::path::Path::new(&keep).join("표 시험.docx")).unwrap();
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 시험: MAGO_HWP=<한글 파일> 을 Word 로 (그 파일 옆에 만든다 — 복사본으로)
+    #[cfg(test)]
+    #[test]
+    #[ignore = "이 PC 의 한글을 띄운다 (보이지 않게) — MAGO_HWP 로 손으로"]
+    fn a_hangul_file_to_word() {
+        let Some(f) = std::env::var_os("MAGO_HWP") else { return };
+        let f = std::path::PathBuf::from(f);
+        let t = std::time::Instant::now();
+        let r = crate::office::to_word(&f, f.parent().unwrap());
+        eprintln!("결과 {r:?} · {}ms", t.elapsed().as_millis());
+        r.unwrap();
     }
 
     /// 시험: 보이지 않는 새 Word 로 그 파일을 열어 두었다가 `stop` 이 오면 닫는다
@@ -654,6 +725,8 @@ mod com {
     fn hwp_tables(path: &str) -> Result<usize, String> {
         let app = Obj::create("HWPFrame.HwpObject")?;
         let _ = app.call("RegisterModule", vec![Var::str("FilePathCheckDLL"), Var::str("FilePathCheckerModule")]);
+        // 숨은 한글의 물음 상자(「호환 문서」 등)는 기본 답(확인 · 예)으로 저절로 — 11-09 대표님 평가지양식.hwp → Word 가 여기서 멈췄다
+        let _ = app.call("SetMessageBoxMode", vec![Var::i4(0x0001_1011)]);
         if let Ok(w) = app.obj("XHwpWindows", vec![]).and_then(|w| w.obj("Item", vec![Var::i4(0)])) {
             let _ = w.put("Visible", Var::bool(false));
         }
@@ -728,6 +801,8 @@ mod com {
     pub fn to_hwp_com(src: &str, dst: &str) -> Result<(), String> {
         let app = Obj::create("HWPFrame.HwpObject").map_err(|e| if e == super::NO_APP { e } else { format!("한글을 {e}") })?;
         let _ = app.call("RegisterModule", vec![Var::str("FilePathCheckDLL"), Var::str("FilePathCheckerModule")]);
+        // 숨은 한글의 물음 상자(「호환 문서」 등)는 기본 답(확인 · 예)으로 저절로 — 11-09 대표님 평가지양식.hwp → Word 가 여기서 멈췄다
+        let _ = app.call("SetMessageBoxMode", vec![Var::i4(0x0001_1011)]);
         if let Ok(w) = app.obj("XHwpWindows", vec![]).and_then(|w| w.obj("Item", vec![Var::i4(0)])) {
             let _ = w.put("Visible", Var::bool(false));
         }
@@ -755,10 +830,57 @@ mod com {
         r
     }
 
+    /// 한글 문서를 **한글이 직접 열어** Word 로 저장 — `base` 에 확장자를 붙여 만든다. 돌려주는 것은 만든 확장자 (docx · doc)
+    pub fn to_word_job(src: &str, base: &str, hwpx: bool) -> Result<String, String> {
+        let inited = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let r = (|| {
+            let app = Obj::create("HWPFrame.HwpObject").map_err(|e| if e == super::NO_APP { e } else { format!("한글을 {e}") })?;
+            let _ = app.call("RegisterModule", vec![Var::str("FilePathCheckDLL"), Var::str("FilePathCheckerModule")]);
+            // 숨은 한글의 물음 상자(「호환 문서」 등)는 기본 답(확인 · 예)으로 저절로 — 11-09 대표님 평가지양식.hwp → Word 가 여기서 멈췄다
+            let _ = app.call("SetMessageBoxMode", vec![Var::i4(0x0001_1011)]);
+            if let Ok(w) = app.obj("XHwpWindows", vec![]).and_then(|w| w.obj("Item", vec![Var::i4(0)])) {
+                let _ = w.put("Visible", Var::bool(false));
+            }
+            let r = (|| {
+                let opened = app
+                    .call("Open", vec![Var::str(src), Var::str(if hwpx { "HWPX" } else { "HWP" }), Var::str("forceopen:true;suspendpassword:true;versionwarning:false")])?
+                    .as_bool()
+                    .unwrap_or(false);
+                if !opened {
+                    return Err(if hwpx { "이 한글은 .hwpx 를 열지 못해요 (한글 2014 이후 판이 필요해요)".to_string() } else { "한글이 이 파일을 열지 못했어요".to_string() });
+                }
+                // 형식 이름은 한글 판마다 다르다 — DOCX 부터, 안 되면 예전 Word(DOC)
+                let mut why = String::from("이 한글 판은 Word 형식으로 저장하지 못해요");
+                for (fmt, ext) in [("OOXML", "docx"), ("DOCX", "docx"), ("MSWORD", "doc")] {
+                    let dst = format!("{base}.{ext}");
+                    match app.call("SaveAs", vec![Var::str(&dst), Var::str(fmt), Var::str("")]) {
+                        Ok(v) if v.as_bool().unwrap_or(true) && std::fs::metadata(&dst).map(|m| m.len() > 0).unwrap_or(false) => {
+                            crate::log(&format!("[문서] 한글이 {fmt} 형식으로 저장"));
+                            return Ok(ext.to_string());
+                        }
+                        Ok(_) => {}
+                        Err(e) => why = format!("{why} ({fmt}: {e})"),
+                    }
+                    let _ = std::fs::remove_file(&dst);
+                }
+                Err(why)
+            })();
+            let _ = app.call("Clear", vec![Var::i4(1)]);
+            let _ = app.call("Quit", vec![]);
+            r
+        })();
+        if inited {
+            unsafe { CoUninitialize() };
+        }
+        r
+    }
+
     fn hwp(src: &str, dst: &str, hwpx: bool) -> Result<(), String> {
         let app = Obj::create("HWPFrame.HwpObject").map_err(|e| if e == super::NO_APP { e } else { format!("한글을 {e}") })?;
         // 한글 자동화는 늘 새 한글을 띄운다 — 창을 숨기고, 다 하면 끈다
         let _ = app.call("RegisterModule", vec![Var::str("FilePathCheckDLL"), Var::str("FilePathCheckerModule")]);
+        // 숨은 한글의 물음 상자(「호환 문서」 등)는 기본 답(확인 · 예)으로 저절로 — 11-09 대표님 평가지양식.hwp → Word 가 여기서 멈췄다
+        let _ = app.call("SetMessageBoxMode", vec![Var::i4(0x0001_1011)]);
         if let Ok(w) = app.obj("XHwpWindows", vec![]).and_then(|w| w.obj("Item", vec![Var::i4(0)])) {
             let _ = w.put("Visible", Var::bool(false));
         }
@@ -787,6 +909,9 @@ pub fn word_picture(pic: &Path) -> Result<(), String> {
 #[cfg(not(windows))]
 mod com {
     pub fn to_hwp_job(_: &str, _: &str) -> Result<(), String> {
+        Err("Windows 에서만 돼요".into())
+    }
+    pub fn to_word_job(_: &str, _: &str, _: bool) -> Result<String, String> {
         Err("Windows 에서만 돼요".into())
     }
     pub fn word_picture(_: &std::path::Path) -> Result<(), String> {

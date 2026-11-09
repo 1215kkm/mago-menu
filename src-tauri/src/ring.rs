@@ -259,6 +259,7 @@ fn seg_of(id: &str) -> Seg {
         "word" => ("Word", "DOCX"),
         "excel" => ("엑셀", "탭마다 칸"),
         "doc-hwp" => ("한글", "HWP · 표 그대로"),
+        "doc-word" => ("Word", "DOCX · 표 그대로"),
         "mix-pdf" => ("PDF", "하나로"),
         "mix-pdfs" => ("PDF", "파일마다"),
         "mix-jpg" => ("JPG", "한 장으로"),
@@ -281,6 +282,7 @@ fn seg_of(id: &str) -> Seg {
         "excel" => ("탭마다 칸으로", "줄마다 한 행, 탭으로 나뉜 곳마다 한 칸이 돼요.".to_string()),
         "hwp" => ("한글 파일로", "한글(.hwpx) 파일을 만들어요. 탭은 빈칸 네 개로 바꿔요.".to_string()),
         "doc-hwp" => ("한글 파일로", "이 PC 의 한글이 Word 파일을 직접 열어 HWP 로 저장해요. 복사해 붙일 때와 달리 표가 그대로예요. 원본 옆에 만들어요.".to_string()),
+        "doc-word" => ("Word 파일로", "이 PC 의 한글이 한글 파일을 직접 열어 Word(DOCX)로 저장해요. 표가 그대로 옮겨 가요. 원본 옆에 만들어요.".to_string()),
         "mix-pdf" => ("1번부터 이어서", "위 목록의 1번부터 차례로 이어 PDF 한 파일로 만들어요. 저장하기 전에 다 만든 모습을 보여 줘요.".to_string()),
         "mix-pdfs" => ("하나씩 PDF 로", "파일마다 PDF 를 하나씩 원본 옆에 만들어요. 이미 PDF 인 것은 그대로 둬요.".to_string()),
         "mix-jpg" => ("세로로 이어서", "위 목록의 1번부터 차례로 세로로 이어 긴 JPG 한 장으로 만들어요. 저장하기 전에 다 만든 모습을 보여 줘요.".to_string()),
@@ -362,6 +364,10 @@ pub fn plan(paths: &[String], s: &Settings) -> Plan {
         // Word 파일만 끌었으면 한글(HWP)로 — 이 PC 에 한글이 있을 때 (10-29 CEO "워드내용을 복사해서 한글프로그램에 넣으면 표가 다깨지는")
         if exts.iter().all(|e| crate::office::WORD_EXT.contains(&e.as_str())) && crate::office::has_hangul() {
             segs.insert(0, seg_of("doc-hwp"));
+        }
+        // 한글 파일만 끌었으면 Word(DOCX)로 — 반대 방향 (11-09 CEO "반대로 hwp도 워드파일로 변형할수있게 해줘")
+        if exts.iter().all(|e| crate::office::HWP_EXT.contains(&e.as_str())) && crate::office::has_hangul() {
+            segs.insert(0, seg_of("doc-word"));
         }
         let note = if segs.is_empty() { "설정에서 보일 형식을 골라 주세요".into() } else { "가운데에 놓으면 취소".into() };
         return Plan { kind: "mix".into(), title, note, segs, files: names() };
@@ -704,7 +710,7 @@ struct Done {
 }
 
 /// 형식 바꾸기가 아니라 파일 하나씩 따로 하는 칸 — 정사각(SNS) · 1MB · 누끼 · 글(TXT) → 문서
-const ONE_BY_ONE: &[&str] = &["square", "small", "cutout", "pdf", "hwp", "word", "excel", "doc-hwp"];
+const ONE_BY_ONE: &[&str] = &["square", "small", "cutout", "pdf", "hwp", "word", "excel", "doc-hwp", "doc-word"];
 
 /// ONE_BY_ONE 칸 하나를 파일 하나에 (actions.rs · cutout.rs · text.rs). progress 는 그 파일 안에서 0~1
 pub fn one(target: &str, src: &Path, dir: &Path, progress: &mut dyn FnMut(f64)) -> Result<crate::convert::OutputFile, String> {
@@ -717,6 +723,7 @@ pub fn one(target: &str, src: &Path, dir: &Path, progress: &mut dyn FnMut(f64)) 
         "word" => crate::text::docx(src, dir),
         "excel" => crate::text::xlsx(src, dir),
         "doc-hwp" => crate::office::to_hwp(src, dir),
+        "doc-word" => crate::office::to_word(src, dir),
         _ => Err(format!("모르는 칸이에요: {target}")),
     }
 }
@@ -796,7 +803,7 @@ pub fn try_mix(paths: &[String], target: &str) -> String {
 fn busy_say(paths: &[String], target: &str) -> &'static str {
     let exts: Vec<String> = paths.iter().map(|p| Path::new(p).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()).collect();
     let has = |list: &[&str]| exts.iter().any(|e| list.contains(&e.as_str()));
-    if target == "doc-hwp" || (target.starts_with("mix-") && has(crate::office::HWP_EXT)) {
+    if target == "doc-hwp" || target == "doc-word" || (target.starts_with("mix-") && has(crate::office::HWP_EXT)) {
         "한글을 여는 중"
     } else if target.starts_with("mix-") && (has(crate::office::WORD_EXT) || has(crate::office::EXCEL_EXT)) {
         "문서를 여는 중"
@@ -1942,7 +1949,11 @@ mod tests {
         assert_eq!(p.segs.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), [hwp, &["mix-pdf", "mix-jpg", "mix-jpgs"]].concat());
         assert!(p.files.is_empty(), "한 개면 목록을 띄우지 않는다");
         let p = plan(&["보고서.docx".into(), "공문.hwp".into()], &s);
-        assert!(!p.segs.iter().any(|g| g.id == "doc-hwp"), "한글 파일이 섞이면 한글 칸은 없다");
+        assert!(!p.segs.iter().any(|g| g.id == "doc-hwp" || g.id == "doc-word"), "Word 와 한글이 섞이면 서로 바꾸는 칸은 없다");
+        // 한글 파일만이면 맨 앞에 Word(DOCX)
+        let p = plan(&["공문.hwp".into()], &s);
+        let word: &[&str] = if crate::office::has_hangul() { &["doc-word"] } else { &[] };
+        assert_eq!(p.segs.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), [word, &["mix-pdf", "mix-jpg", "mix-jpgs"]].concat());
         // 소리는 섞지 못한다
         let p = plan(&["a.mp3".into(), "b.jpg".into()], &s);
         assert_eq!(p.kind, "mixed");
@@ -1965,6 +1976,7 @@ mod tests {
     fn opening_an_office_app_says_so() {
         let v = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(busy_say(&v(&["보고서.docx"]), "doc-hwp"), "한글을 여는 중");
+        assert_eq!(busy_say(&v(&["공문.hwp"]), "doc-word"), "한글을 여는 중");
         assert_eq!(busy_say(&v(&["공문.HWP", "사진.jpg"]), "mix-pdf"), "한글을 여는 중");
         assert_eq!(busy_say(&v(&["보고서.docx"]), "mix-jpg"), "문서를 여는 중");
         assert_eq!(busy_say(&v(&["표.xlsx"]), "mix-pdf"), "문서를 여는 중");
