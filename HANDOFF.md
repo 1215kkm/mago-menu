@@ -164,6 +164,7 @@
 ## 0.1.12 — 11-09 대표님 "반대로 hwp도 워드파일로 변형할수있게 해줘"
 - 한글 파일(hwp · hwpx)만 끌면 고리 맨 앞에 **「Word · DOCX · 표 그대로」**(`doc-word`) — 한글이 있을 때만. `office::to_word` → `com::to_word_job`.
 - 한글이 직접 열어 `SaveAs` — 형식 이름이 판마다 달라 `OOXML` → `DOCX`(.docx) → `MSWORD`(.doc) 순서로 해 보고 된 것으로. 임시 폴더에서 (0.1.10 확인 창 함정).
+- 함정: 서식 있는 실제 파일(대표님 평가지양식.hwp)은 Word 로 저장할 때 숨은 한글이 **「호환 문서」 물음**(HNC_DIALOG)을 띄우고 멈췄다 → 한글을 띄울 때마다 `SetMessageBoxMode(0x11011)`(확인 · 예 를 저절로). 고친 뒤 실제 exe 로 5.6초, 표 2개 · 4쪽(원본 2쪽 — 자간이 넓어짐).
 - 확인: 표(칸 합치기 포함) docx → HWP → docx 왕복 7초, Word 로 열어 표 1개 · 글 그대로 (`office::com::hangul_turns_a_word_table_into_hwp`, ignore).
 
 ## 다음에 할 일 (★ = 대표님 결정)
