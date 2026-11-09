@@ -16,6 +16,27 @@ const T = window.__TAURI__;
 const root = document.getElementById('ring');
 let v = { shown: false, busy: false, preview: false, plan: { kind: 'wait', title: '', note: '', segs: [] }, hover: null, trash: false, left: 0, total: 0, character: 'cat' };
 let prog = null; // { done, total, frac }
+let progAt = 0; // 마지막으로 진행이 온 때 — 그 사이에도 고리가 천천히 차게 (11-09 CEO "처음엔 몇초동안 0이길래 안되는줄 알았어")
+let busySay = ''; // 가운데 % 아래 한 줄 — "한글을 여는 중" 같은 지금 하는 일 (qconv:say)
+let creep = null; // 진행 중에 고리를 다시 그리는 타이머
+
+/// 실제 진행(frac)에서, 지금 파일이 끝나는 자리(다음 칸)까지 시간이 갈수록 천천히 다가간다 — 끝 자리의 90% 넘게는 가지 않는다
+function shownFrac() {
+  const f = prog ? prog.frac : 0;
+  const total = prog ? Math.max(1, prog.total) : 1;
+  const next = prog ? Math.min(1, (prog.done + 1) / total) : 1;
+  const cap = f + 0.9 * Math.max(0, next - f);
+  const t = (performance.now() - progAt) / 1000;
+  // 한 번 보인 자리에서 뒤로 가지 않는다 (파일 안 진행이 천천히 차오른 자리보다 낮게 와도)
+  shownMax = Math.max(shownMax, f + (cap - f) * (1 - Math.exp(-t / 5)));
+  return Math.min(1, shownMax);
+}
+let shownMax = 0;
+
+function creepOn(on) {
+  if (on && !creep) creep = setInterval(render, 200);
+  if (!on && creep) { clearInterval(creep); creep = null; }
+}
 let done = null; // { made, failed, firstError, movedTo, note, preview }
 let trashMsg = null; // 쓰레기통이 일할 때 가운데 글 { title, note }
 let tipOn = null; // 말풍선에 설명을 띄운 칸 번호
@@ -145,12 +166,13 @@ function drawHub(segs) {
     wrap(trashMsg.note, 9, 2).forEach((l, k) => add(text(C, C + 7 + k * 12, 'hn', l)));
     add(hiddenLine());
   } else if (v.busy || prog) {
-    const f = prog ? prog.frac : 0;
+    const f = shownFrac();
     const r = R_IN - 12;
     const len = 2 * Math.PI * r;
     add(svg('circle', { cx: C, cy: C, r, class: 'pbg' }));
     add(svg('circle', { cx: C, cy: C, r, class: 'pfg', 'stroke-dasharray': `${len * f} ${len}`, transform: `rotate(-90 ${C} ${C})` }));
-    add(text(C, C, 'ht', `${Math.round(f * 100)}%`));
+    add(text(C, busySay ? C - 6 : C, 'ht', `${Math.round(f * 100)}%`));
+    if (busySay) add(text(C, C + 12, 'hn', busySay));
   } else {
     const hov = v.hover != null && segs[v.hover];
     const title = v.trash ? ch.name : hov ? hov.label : v.plan.title || '';
@@ -453,16 +475,27 @@ function afterEat(r) {
 
 T.event.listen('qconv:view', (e) => {
   const nv = e.payload;
-  if (!nv.shown || !v.shown) { prog = null; done = null; }
+  if (!nv.shown || !v.shown) { prog = null; done = null; busySay = ''; }
   // 고리가 숨어 있을 때만 바꾼다 — 먹는 도중에 캐릭터가 바뀌지 않게
   if (!v.shown) useChar(nv.character);
+  if (nv.busy && !v.busy) { progAt = performance.now(); shownMax = 0; }
+  if (!nv.shown) shownMax = 0;
   v = nv;
+  creepOn(v.shown && (v.busy || prog) && !done);
   render();
 });
-T.event.listen('qconv:progress', (e) => { prog = e.payload; render(); });
+T.event.listen('qconv:progress', (e) => {
+  if (!prog || e.payload.frac !== prog.frac || e.payload.done !== prog.done) progAt = performance.now();
+  prog = e.payload;
+  creepOn(!done);
+  render();
+});
+T.event.listen('qconv:say', (e) => { busySay = e.payload || ''; render(); });
 T.event.listen('qconv:done', (e) => {
   done = e.payload;
   prog = null;
+  busySay = '';
+  creepOn(false);
   tipOn = null;
   render();
   // 못 바꾼 것이 있으면 그 이유를 말풍선으로 (가운데 원에는 다 들어가지 않는다)

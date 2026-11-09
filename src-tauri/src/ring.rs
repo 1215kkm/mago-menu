@@ -791,10 +791,28 @@ pub fn try_mix(paths: &[String], target: &str) -> String {
     format!("만듦 {} · 실패 {} · {} {} {}", o.made, o.failed, o.note, o.first_error, o.moved_to)
 }
 
+/// 한글 · Word · 엑셀을 띄워야 하는 일이면 고리 가운데 % 아래에 보일 한 줄 — 띄우는 데 몇 초 걸려 멈춘 줄 아시지 않게
+/// (11-09 CEO "좀 느리네 처음엔 몇초동안 0이길래 안되는줄 알았어")
+fn busy_say(paths: &[String], target: &str) -> &'static str {
+    let exts: Vec<String> = paths.iter().map(|p| Path::new(p).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase()).collect();
+    let has = |list: &[&str]| exts.iter().any(|e| list.contains(&e.as_str()));
+    if target == "doc-hwp" || (target.starts_with("mix-") && has(crate::office::HWP_EXT)) {
+        "한글을 여는 중"
+    } else if target.starts_with("mix-") && (has(crate::office::WORD_EXT) || has(crate::office::EXCEL_EXT)) {
+        "문서를 여는 중"
+    } else {
+        ""
+    }
+}
+
 fn run(paths: Vec<String>, target: String) {
     let s = settings();
     let total = paths.len();
     crate::log(&format!("[MAGO] {total}개 → {target}"));
+    let say = busy_say(&paths, &target);
+    if !say.is_empty() {
+        emit("qconv:say", say);
+    }
     if target.starts_with("mix-") {
         let out = match target.as_str() {
             "mix-jpg" => run_sheet(&paths, &s, false),
@@ -1940,6 +1958,18 @@ mod tests {
         assert_eq!(old.clean().mix, MIX_OPTS);
         let odd: Settings = serde_json::from_value(serde_json::json!({ "mix": ["mix-jpg", "x"], "ver": 5 })).unwrap();
         assert_eq!(odd.clean().mix, ["mix-jpg"]);
+    }
+
+    /// 한글 · 문서 프로그램을 띄우는 일만 "여는 중" 한 줄을 보인다 (그림 바꾸기는 금방 끝난다)
+    #[test]
+    fn opening_an_office_app_says_so() {
+        let v = |p: &[&str]| p.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(busy_say(&v(&["보고서.docx"]), "doc-hwp"), "한글을 여는 중");
+        assert_eq!(busy_say(&v(&["공문.HWP", "사진.jpg"]), "mix-pdf"), "한글을 여는 중");
+        assert_eq!(busy_say(&v(&["보고서.docx"]), "mix-jpg"), "문서를 여는 중");
+        assert_eq!(busy_say(&v(&["표.xlsx"]), "mix-pdf"), "문서를 여는 중");
+        assert_eq!(busy_say(&v(&["사진.jpg"]), "mix-pdf"), "");
+        assert_eq!(busy_say(&v(&["사진.jpg"]), "png"), "");
     }
 
     /// 0.1.6 까지 저장된 설정(인터넷 칸이 없다) — 칸은 전부, 저장 폴더는 다운로드, 저장 뒤 폴더 열기는 켬
